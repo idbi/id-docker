@@ -16,10 +16,16 @@ A production-ready PHP 8.3 FPM (Alpine) runtime image tuned for Laravel. Ships h
 A production-ready nginx (Alpine) front end for the `php-fpm` runtime. Serves a Laravel app's static assets from `/app/public` and reverse-proxies PHP requests to a separate php-fpm container over FastCGI. Ships gzip, static-asset caching, security headers, and an internal healthcheck; runs non-root on port 8080.
 
 ### **node-builder**
-A Node.js LTS + OpenJDK 17 Docker image for full-stack applications requiring both Node.js and Java. Includes rsync for file synchronization tasks. Suitable for multi-language CI/CD workflows.
+A Node.js 22 (Alpine) + OpenJDK 17 build image for applications requiring both Node.js and Java. Ships a full `node-gyp` toolchain, `git`, and `rsync` for multi-language CI/CD workflows. Pairs with `node-runtime` (runtime) — both share the same Alpine base and Node major so build artifacts are binary compatible.
+
+### **node-runtime**
+A production-ready Node.js 22 (Alpine) runtime image tuned for Next.js apps built with `output: 'standalone'`. Ships `dumb-init` for graceful shutdown, an HTTP healthcheck, and runs non-root on port 3000. Pairs with `node-builder` (build) — apps extend it via `FROM` and need no web-server sidecar.
 
 ### **certbot-renewal**
 An automated TLS/SSL certificate renewal solution using Certbot with DNS-01 validation (AWS Route53) and secure upload to HashiCorp Vault. Designed for Kubernetes CronJobs and standalone automation.
+
+### **ssh-agent**
+A minimal Debian 12 slim image with `openssh-client`, `rsync`, `git`, and `curl`, running as an unprivileged `deploy` user. Used for key-based remote deployment and file-transfer steps in CI/CD pipelines.
 
 ---
 
@@ -34,6 +40,7 @@ docker/
 ├── php-fpm/
 │   ├── Dockerfile
 │   ├── README.md
+│   ├── CHANGELOG.md
 │   └── docker/
 ├── php-nginx/
 │   ├── Dockerfile
@@ -44,12 +51,31 @@ docker/
 │   ├── Dockerfile
 │   ├── README.md
 │   └── CHANGELOG.md
+├── node-runtime/
+│   ├── Dockerfile
+│   ├── README.md
+│   ├── CHANGELOG.md
+│   └── docker/
+├── ssh-agent/
+│   ├── Dockerfile
+│   ├── README.md
+│   └── CHANGELOG.md
 ├── certbot-renewal/
 │   ├── Dockerfile
 │   ├── entrypoint.sh
 │   ├── README.md
+│   ├── manifests/
 │   └── scripts/
-├── release.json
+├── traefik/                      # deployment config only — no image is built
+│   └── docker-compose.yml
+├── .github/
+│   ├── scripts/
+│   │   └── validate-releases.sh  # derives the build matrix from released tags
+│   └── workflows/
+│       ├── docker-publish.yml
+│       └── release-please.yml
+├── release-please-config.json    # component registry (see "Add a New Project")
+├── .release-please-manifest.json # current version per component
 └── README.md
 ```
 
@@ -91,7 +117,7 @@ This repository uses [Release Please](https://github.com/googleapis/release-plea
 
 1. **Automated Release PRs**: Release Please monitors commits and automatically creates a pull request when changes are detected.
 2. **Semantic Versioning**: Each component follows semantic versioning (Major.Minor.Patch).
-3. **Component Tags**: Images are tagged with both version and component name (e.g., `v1.2.3-php-builder`).
+3. **Component Tags**: Git tags include both the component name and version, in the form `<component>@v<version>` (e.g., `php-builder@v1.2.3`).
 4. **Single Release PR**: All changed components are included in a single pull request for review.
 5. **Merged Changelog**: Merging the release PR automatically publishes new image versions.
 
@@ -99,13 +125,15 @@ This repository uses [Release Please](https://github.com/googleapis/release-plea
 
 Images are published to [GitHub Container Registry (GHCR)](https://ghcr.io) with the following pattern:
 ```
-ghcr.io/idbi/<component>:v<version>-<component>
+ghcr.io/idbi/docker-<component>:<version>
 ```
 
-Examples:
-- `ghcr.io/idbi/php-builder:v1.0.0-php-builder`
-- `ghcr.io/idbi/node-builder:v1.0.0-node-builder`
-- `ghcr.io/idbi/certbot-renewal:v1.0.0-certbot-renewal`
+Each release publishes three tags for the component — the exact version, the major version, and `latest`:
+- `ghcr.io/idbi/docker-php-fpm:1.0.3` — Specific version
+- `ghcr.io/idbi/docker-php-fpm:1` — Latest patch for a major version
+- `ghcr.io/idbi/docker-php-fpm:latest` — Latest stable release
+
+All images are built for `linux/amd64` only, with build provenance and an SBOM attached and attested to the registry.
 
 ### Triggering a Release
 
@@ -118,9 +146,18 @@ Simply merge your changes to the main branch. Release Please will automatically:
 
 ## How to Add a New Project
 
-1. Create a new subdirectory and place a `Dockerfile` and supporting scripts/config there.
-2. (Optionally) Add a `README.md` with usage notes.
-3. The CI system will build your project automatically.
+1. **Create the component directory** — `<component>/Dockerfile`, plus a `docker/` subdirectory for any runtime config the Dockerfile copies in. The build context is the component directory itself, so every `COPY` path must be relative to it (`COPY docker/php.ini …`, not `COPY php-fpm/docker/php.ini …`).
+2. **Add a `README.md`** with usage notes, a configuration table, and verification commands. Use `php-fpm/README.md` or `node-runtime/README.md` as the template.
+3. **Register the component in `release-please-config.json`** under `packages`, using the directory name for both the key and `component`:
+   ```json
+   "my-component": {
+     "component": "my-component",
+     "release-type": "simple"
+   }
+   ```
+   This step is **required** — the publish pipeline discovers components from released tags, so an unregistered directory is never built. Leave `.release-please-manifest.json` alone; Release Please adds the entry itself on the first release.
+4. **Add a `CHANGELOG.md`** containing just `# Changelog`. Release Please rewrites it on each release.
+5. **Merge to `main`** with a `feat(<component>):` commit. Release Please opens a release PR; merging it creates the `<component>@vX.Y.Z` tag, which is what triggers the image build and push. No image is published before that tag exists.
 
 ---
 

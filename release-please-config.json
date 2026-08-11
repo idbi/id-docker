@@ -20,6 +20,10 @@
       "component": "node-builder",
       "release-type": "simple"
     },
+    "node-runtime": {
+      "component": "node-runtime",
+      "release-type": "simple"
+    },
     "certbot-renewal": {
       "component": "certbot-renewal",
       "release-type": "simple"
