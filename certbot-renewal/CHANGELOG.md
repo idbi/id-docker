@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v1.1.0...certbot-renewal@v2.0.0) (2026-08-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* simplify Vault configuration by replacing `VAULT_CERT_PATH` with `VAULT_MOUNT_POINT` and `VAULT_KEY`
+
+### Code Refactoring
+
+* simplify Vault configuration by replacing `VAULT_CERT_PATH` with `VAULT_MOUNT_POINT` and `VAULT_KEY` ([b9e8e66](https://github.com/idbi/id-docker/commit/b9e8e66495ced047117eae1cb6bdc521f20e65f3))
+
 ## [1.1.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v1.0.0...certbot-renewal@v1.1.0) (2026-08-12)
 
 
