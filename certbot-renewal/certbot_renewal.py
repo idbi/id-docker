@@ -65,8 +65,8 @@ class Config:
     """Validated configuration with credentials excluded from representations."""
 
     vault_addr: str
-    vault_cert_mount: str
-    vault_cert_secret_path: str
+    vault_mount_point: str
+    vault_key: str
     domain: str
     email: str
     vault_role: str = "certbot-renewal"
@@ -79,12 +79,12 @@ class Config:
     @classmethod
     def from_env(cls, environment: Mapping[str, str] | None = None) -> Config:
         env = os.environ if environment is None else environment
-        raw_cert_path = _required(env, "VAULT_CERT_PATH").strip("/")
-        mount, separator, secret_path = raw_cert_path.partition("/")
-        if not separator or not mount or not secret_path.strip("/"):
-            raise ConfigurationError(
-                "VAULT_CERT_PATH must contain a KV v2 mount and secret path"
-            )
+        vault_mount_point = _required(env, "VAULT_MOUNT_POINT").strip("/")
+        vault_key = _required(env, "VAULT_KEY").strip("/")
+        if not vault_mount_point:
+            raise ConfigurationError("VAULT_MOUNT_POINT must not be empty")
+        if not vault_key:
+            raise ConfigurationError("VAULT_KEY must not be empty")
 
         raw_threshold = env.get("DAYS_THRESHOLD", "30").strip()
         try:
@@ -110,8 +110,8 @@ class Config:
         cacert = env.get("VAULT_CACERT", "").strip()
         return cls(
             vault_addr=_required(env, "VAULT_ADDR"),
-            vault_cert_mount=mount,
-            vault_cert_secret_path=secret_path.strip("/"),
+            vault_mount_point=vault_mount_point,
+            vault_key=vault_key,
             domain=_required(env, "DOMAIN"),
             email=_required(env, "EMAIL"),
             vault_role=vault_role,
@@ -369,13 +369,13 @@ def read_stored_certificate(client: hvac.Client, config: Config) -> str | None:
     logger.debug(
         "Vault remote call: GET %s/v1/%s/data/%s",
         _safe_url(config.vault_addr).rstrip("/"),
-        config.vault_cert_mount,
-        config.vault_cert_secret_path,
+        config.vault_mount_point,
+        config.vault_key,
     )
     try:
         response = client.secrets.kv.v2.read_secret_version(
-            mount_point=config.vault_cert_mount,
-            path=config.vault_cert_secret_path,
+            mount_point=config.vault_mount_point,
+            path=config.vault_key,
         )
     except hvac.exceptions.InvalidPath:
         return None
@@ -485,12 +485,12 @@ def store_certificate(
     logger.debug(
         "Vault remote call: POST %s/v1/%s/data/%s",
         _safe_url(config.vault_addr).rstrip("/"),
-        config.vault_cert_mount,
-        config.vault_cert_secret_path,
+        config.vault_mount_point,
+        config.vault_key,
     )
     client.secrets.kv.v2.create_or_update_secret(
-        mount_point=config.vault_cert_mount,
-        path=config.vault_cert_secret_path,
+        mount_point=config.vault_mount_point,
+        path=config.vault_key,
         secret={"fullchain": fullchain, "privkey": privkey},
     )
 

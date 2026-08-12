@@ -34,7 +34,9 @@ ServiceAccount token there or set `VAULT_JWT_PATH` to the projected file.
 Required variables:
 
 - `VAULT_ADDR`: Vault server URL. TLS verification is enabled by default.
-- `VAULT_CERT_PATH`: KV v2 mount followed by its secret path.
+- `VAULT_MOUNT_POINT`: KV v2 mount point, for example `idbi`.
+- `VAULT_KEY`: key within the KV v2 mount, for example
+  `certificates/nginx`.
 - `DOMAIN`: certificate name and apex DNS name.
 - `EMAIL`: Let's Encrypt account email.
 
@@ -81,10 +83,17 @@ the Certbot child environment; AWS variables are preserved.
 
 ### Vault path and policy
 
-`VAULT_CERT_PATH=idbi/certificates/nginx` is parsed as:
+For this configuration:
+
+```sh
+VAULT_MOUNT_POINT=idbi
+VAULT_KEY=certificates/nginx
+```
+
+Vault uses:
 
 - KV v2 mount: `idbi`
-- secret path: `certificates/nginx`
+- key: `certificates/nginx`
 - HTTP API path: `idbi/data/certificates/nginx`
 
 The secret contains the existing field names `fullchain` and `privkey`. The
@@ -129,7 +138,8 @@ For a local or emergency static-token run:
 ```sh
 docker run --rm \
   -e VAULT_ADDR="https://vault.example.com" \
-  -e VAULT_CERT_PATH="idbi/certificates/nginx" \
+  -e VAULT_MOUNT_POINT="idbi" \
+  -e VAULT_KEY="certificates/nginx" \
   -e VAULT_TOKEN="..." \
   -e DOMAIN="example.com" \
   -e EMAIL="admin@example.com" \
