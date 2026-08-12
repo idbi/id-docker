@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/idbi/id-docker/compare/php-nginx@v1.0.1...php-nginx@v1.0.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* simplify nginx log format by removing redundant `$args` ([e25dc25](https://github.com/idbi/id-docker/commit/e25dc25be9f66922aab03371e835763bc0d64cc4))
+
 ## [1.0.1](https://github.com/idbi/id-docker/compare/php-nginx@v1.0.0...php-nginx@v1.0.1) (2026-07-10)
 
 
