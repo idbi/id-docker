@@ -1,3 +1,0 @@
-# We ignore all files in this directory but keep the exception for the examples.
-*.yml
-!*.example.yml

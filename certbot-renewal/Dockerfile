@@ -1,23 +1,21 @@
-# Stage 1: Get Vault binary
-FROM hashicorp/vault:1.19.3 AS vault-bin
+FROM python:3.12.11-alpine3.22
 
-# Stage 2: Start from a minimal base and add required utilities
-FROM alpine:latest
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-RUN apk add --no-cache coreutils bash curl jq openssl certbot certbot-dns-route53
+RUN addgroup -S -g 10001 certbot-renewal \
+    && adduser -S -D -H -u 10001 -G certbot-renewal certbot-renewal \
+    && mkdir -p /app /etc/letsencrypt /var/lib/letsencrypt \
+    && chown -R certbot-renewal:certbot-renewal \
+        /app /etc/letsencrypt /var/lib/letsencrypt
 
-# Copy Vault binary from build stage
-COPY --from=vault-bin /bin/vault /usr/local/bin/vault
+WORKDIR /app
 
-# Set working directory
-WORKDIR /work
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --requirement /app/requirements.txt
 
-# Copy entrypoint and scripts
-COPY entrypoint.sh /work/entrypoint.sh
-COPY scripts/* /work/scripts/
+COPY certbot_renewal.py /app/certbot_renewal.py
 
-# Ensure all scripts are executable
-RUN chmod +x /work/scripts/* /work/entrypoint.sh
+USER certbot-renewal
 
-# Set default entrypoint
-ENTRYPOINT ["/work/entrypoint.sh"]
+ENTRYPOINT ["python", "-m", "certbot_renewal"]

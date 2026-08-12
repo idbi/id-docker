@@ -1,157 +1,115 @@
 # Certbot Renewal Automation
 
-This project provides a containerized solution for **automated TLS/SSL certificate renewal** using [Certbot](https://certbot.eff.org/) with DNS validation (typically via AWS Route53) and secure upload of certificates to a [HashiCorp Vault](https://www.vaultproject.io/) server.  
-It is designed for use as a Kubernetes Job, CronJob, or a standalone automation task.
+This image checks a certificate stored in HashiCorp Vault, obtains an apex and
+wildcard certificate through Certbot's Route53 DNS-01 plugin when renewal is
+needed, and writes the result to Vault KV v2. The renewal application was
+migrated from Bash and the Vault CLI to typed Python code using `hvac`.
 
----
+## Authentication precedence
 
-## Features
+The application authenticates with Vault before reading the existing
+certificate or starting Certbot:
 
-- **Automated certificate renewals** based on custom expiry thresholds.
-- Uses **DNS-01 challenge** (Route53 plugin) for wildcard and domain certificates.
-- Uploads new certificates and private keys securely to a configurable Vault path.
-- Modular Bash scripting — each phase (check, renew, upload) is a separate script.
-- Container- and cloud-native: easy to integrate with Kubernetes, CI/CD, or as a one-shot script.
+1. Kubernetes is detected when `KUBERNETES_SERVICE_HOST` is set or the file at
+   `VAULT_JWT_PATH` exists.
+2. When Kubernetes is detected, the projected ServiceAccount JWT is exchanged
+   at the configured Vault Kubernetes auth mount. A successful login always
+   wins, even when `VAULT_TOKEN` is also present.
+3. If the Kubernetes login fails, a non-empty `VAULT_TOKEN` is validated and
+   used as an emergency/backward-compatible fallback.
+4. Outside Kubernetes, a non-empty `VAULT_TOKEN` is validated directly.
+5. If no method authenticates successfully, the process exits before Certbot.
 
----
+Fallback is limited to authentication. A Certbot failure or a Vault certificate
+read/write failure does not cause a second renewal attempt with the static
+token. Kubernetes-issued tokens are revoked on exit when practical. A supplied
+`VAULT_TOKEN` is never renewed or revoked automatically and is removed from the
+environment passed to Certbot.
 
-## Directory Structure
+The default projected JWT location is `/var/run/secrets/vault/token`. Mount a
+ServiceAccount token there or set `VAULT_JWT_PATH` to the projected file.
 
+## Configuration
+
+Required variables:
+
+- `VAULT_ADDR`: Vault server URL. TLS verification is enabled by default.
+- `VAULT_CERT_PATH`: KV v2 mount followed by its secret path.
+- `DOMAIN`: certificate name and apex DNS name.
+- `EMAIL`: Let's Encrypt account email.
+
+Vault authentication variables:
+
+- `VAULT_ROLE`: Kubernetes auth role; defaults to `certbot-renewal`.
+- `VAULT_AUTH_PATH`: Kubernetes auth mount; defaults to `kubernetes`.
+- `VAULT_JWT_PATH`: projected token file; defaults to
+  `/var/run/secrets/vault/token`.
+- `VAULT_TOKEN`: optional controlled fallback. The token needs
+  `auth/token/lookup-self` read permission in addition to certificate access.
+- `VAULT_CACERT`: optional CA bundle for a private Vault CA.
+
+Renewal variables:
+
+- `DAYS_THRESHOLD`: renew when the stored certificate expires within this many
+  days; defaults to `30`.
+
+Route53 authentication continues to use the standard AWS credential chain.
+Common variables include `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
+`AWS_SESSION_TOKEN`, and `AWS_DEFAULT_REGION`. The Vault token is removed from
+the Certbot child environment; AWS variables are preserved.
+
+### Vault path and policy
+
+`VAULT_CERT_PATH=idbi/certificates/nginx` is parsed as:
+
+- KV v2 mount: `idbi`
+- secret path: `certificates/nginx`
+- HTTP API path: `idbi/data/certificates/nginx`
+
+The secret contains the existing field names `fullchain` and `privkey`. The
+Vault policy needs read access to inspect `fullchain` and create/update access
+to store both fields. Static fallback validation may require:
+
+```hcl
+path "auth/token/lookup-self" {
+  capabilities = ["read"]
+}
 ```
-certbot-renewal/
-├── Dockerfile
-├── entrypoint.sh
-└── scripts/
-    ├── 00-check.sh      # Check if current certificate in Vault needs renewal
-    ├── 01-renew.sh      # Runs Certbot to obtain/renew certificate
-    └── 02-upload.sh     # Uploads renewed certificate and key to Vault
+
+## Certbot behavior
+
+Certbot requests both `DOMAIN` and `*.DOMAIN` with `--dns-route53`, uses
+`DOMAIN` as `--cert-name`, and keeps the existing non-interactive, terms,
+email, config, work, and ephemeral log options. Files are read from:
+
+```text
+/etc/letsencrypt/live/<DOMAIN>/fullchain.pem
+/etc/letsencrypt/live/<DOMAIN>/privkey.pem
 ```
 
----
+Both files must exist and be non-empty before the Vault write occurs. The
+application never logs JWTs, Vault tokens, AWS credentials, certificate values,
+private keys, complete subprocess environments, or raw Vault responses.
 
-## Usage
+## Build and run
 
-### 1. **Pull from GitHub Container Registry**
+Build from the repository root:
 
 ```sh
-docker pull ghcr.io/idbi/docker-certbot-renewal:latest
+docker build -t local/certbot-renewal:test ./certbot-renewal
 ```
 
-**Available tags:**
-- `ghcr.io/idbi/docker-certbot-renewal:latest` — Latest stable release
-- `ghcr.io/idbi/docker-certbot-renewal:X.Y.Z` — Specific version
-- `ghcr.io/idbi/docker-certbot-renewal:X` — Latest patch for major version
-
-### 2. **Build Locally**
-
-```sh
-docker build -t certbot-renewal:latest certbot-renewal/
-```
-
-### 3. **Run the Container**
-
-Prepare your environment variables and credentials. Example:
+Kubernetes should project a ServiceAccount token and configure the Vault role.
+For a local or emergency static-token run:
 
 ```sh
 docker run --rm \
+  -e VAULT_ADDR="https://vault.example.com" \
+  -e VAULT_CERT_PATH="idbi/certificates/nginx" \
+  -e VAULT_TOKEN="..." \
   -e DOMAIN="example.com" \
   -e EMAIL="admin@example.com" \
-  -e VAULT_CERT_PATH="myapp/certificates" \
-  -e VAULT_TOKEN="..." \
   -e AWS_ACCESS_KEY_ID="..." \
   -e AWS_SECRET_ACCESS_KEY="..." \
-  certbot-renewal:latest
+  local/certbot-renewal:test
 ```
-
-**Required environment variables:**
-- `DOMAIN` — The primary domain (wildcard supported).
-- `EMAIL` — Email for Let's Encrypt notifications.
-- `VAULT_CERT_PATH` — Base path in Vault to store the certificate.
-- `VAULT_TOKEN` — Token with permissions to write the target path in Vault.
-- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` — Credentials to update Route53 records for DNS-01 validation.
-
-**Optional environment variables:**
-- `DAYS_THRESHOLD` — Number of days before certificate expiry to trigger renewal (default: 30).
-
----
-
-## Workflow
-
-1. `00-check.sh`:  
-   Checks the current certificate in Vault. Determines whether renewal is needed based on expiry threshold.
-2. `01-renew.sh`:  
-   If renewal is needed, obtains a new certificate from Let's Encrypt using certbot and DNS (Route53) validation.
-3. `02-upload.sh`:  
-   Uploads the renewed certificate and private key to the chosen Vault path.
-
----
-
-## Typical Kubernetes Usage (CronJob Skeleton)
-
-```yaml
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: certbot-renewal
-spec:
-  schedule: "0 0 * * *"
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          restartPolicy: OnFailure
-          containers:
-            - name: certbot-renewal
-              image: ghcr.io/yourorg/certbot-renewal:latest
-              env:
-                - name: DOMAIN
-                  value: "example.com"
-                - name: EMAIL
-                  value: "admin@example.com"
-                - name: VAULT_CERT_PATH
-                  value: "myapp/certificates"
-                - name: VAULT_TOKEN
-                  valueFrom:
-                    secretKeyRef:
-                      name: vault-credentials
-                      key: vault-token
-                - name: AWS_ACCESS_KEY_ID
-                  valueFrom:
-                    secretKeyRef:
-                      name: aws-creds
-                      key: aws-access-key-id
-                - name: AWS_SECRET_ACCESS_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: aws-creds
-                      key: aws-secret-access-key
-```
-
----
-
-## Security Notes
-
-- Ensure Vault and AWS credentials are injected via Kubernetes secrets, not hardcoded.
-- The container runs each operation step-by-step and only performs renewal/upload when needed.
-- Regularly rotate your Vault tokens and AWS keys.
-
----
-
-## Extending
-
-- To use a different DNS provider: adjust certbot arguments and install the required plugin.
-- For notification/webhook on renewal: hook into the end of `02-upload.sh`.
-- For monitoring: emit logs to a centralized system, or use sidecars (e.g., Promtail or Otel Collector).
-
----
-
-## Troubleshooting
-
-- Check logs from `entrypoint.sh` and individual scripts for step-by-step output.
-- Ensure correct permissions in Vault (write access) and AWS Route53 (DNS record management).
-- Validate your environment variables and secrets for typos or missing entries.
-
-
----
-
-For questions, improvements, or bug reports, please contact the IDBI DevOps team.
