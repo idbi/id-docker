@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v1.0.0...certbot-renewal@v1.1.0) (2026-08-12)
+
+
+### Features
+
+* enhance logging with configurable log levels and improved error handling ([fa4638b](https://github.com/idbi/id-docker/commit/fa4638b3e7f3261d4c173e44584e69202660c0aa))
+
 ## [1.0.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v0.3.1...certbot-renewal@v1.0.0) (2026-08-12)
 
 
