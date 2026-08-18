@@ -34,7 +34,9 @@ ServiceAccount token there or set `VAULT_JWT_PATH` to the projected file.
 Required variables:
 
 - `VAULT_ADDR`: Vault server URL. TLS verification is enabled by default.
-- `VAULT_CERT_PATH`: KV v2 mount followed by its secret path.
+- `VAULT_MOUNT_POINT`: KV v2 mount point, for example `idbi`.
+- `VAULT_KEY`: key within the KV v2 mount, for example
+  `certificates/nginx`.
 - `DOMAIN`: certificate name and apex DNS name.
 - `EMAIL`: Let's Encrypt account email.
 
@@ -53,6 +55,27 @@ Renewal variables:
 - `DAYS_THRESHOLD`: renew when the stored certificate expires within this many
   days; defaults to `30`.
 
+Logging variables:
+
+- `LOG_LEVEL`: `INFO` (the default), `DEBUG`, `TRACE`, `WARNING`, `ERROR`, or
+  `CRITICAL`. `DEBUG` reports authentication discovery, Vault endpoints, roles,
+  paths, TLS settings, and sanitized remote error details. `TRACE` additionally
+  prints partially redacted markers for the Kubernetes JWT and Vault tokens so a
+  credential can be correlated across events without disclosing its full value.
+
+For authentication troubleshooting, start with:
+
+```sh
+LOG_LEVEL=DEBUG
+```
+
+Use `TRACE` only when token correlation is needed. For credentials longer than
+eight characters, a marker shows the first and last four characters with the
+middle replaced by `...`. Shorter values show only their first and last
+character; values of two or fewer characters remain fully masked. The marker
+also contains the credential length and the first 12 hexadecimal characters of
+its SHA-256 digest. Request and response bodies are never logged.
+
 Route53 authentication continues to use the standard AWS credential chain.
 Common variables include `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
 `AWS_SESSION_TOKEN`, and `AWS_DEFAULT_REGION`. The Vault token is removed from
@@ -60,10 +83,17 @@ the Certbot child environment; AWS variables are preserved.
 
 ### Vault path and policy
 
-`VAULT_CERT_PATH=idbi/certificates/nginx` is parsed as:
+For this configuration:
+
+```sh
+VAULT_MOUNT_POINT=idbi
+VAULT_KEY=certificates/nginx
+```
+
+Vault uses:
 
 - KV v2 mount: `idbi`
-- secret path: `certificates/nginx`
+- key: `certificates/nginx`
 - HTTP API path: `idbi/data/certificates/nginx`
 
 The secret contains the existing field names `fullchain` and `privkey`. The
@@ -88,8 +118,11 @@ email, config, work, and ephemeral log options. Files are read from:
 ```
 
 Both files must exist and be non-empty before the Vault write occurs. The
-application never logs JWTs, Vault tokens, AWS credentials, certificate values,
-private keys, complete subprocess environments, or raw Vault responses.
+application never logs raw JWTs, raw Vault tokens, AWS credentials, certificate
+values, private keys, complete subprocess environments, request bodies, or raw
+Vault responses. `TRACE` can log partially redacted credential markers as
+described above; those markers intentionally reveal a few credential
+characters.
 
 ## Build and run
 
@@ -105,7 +138,8 @@ For a local or emergency static-token run:
 ```sh
 docker run --rm \
   -e VAULT_ADDR="https://vault.example.com" \
-  -e VAULT_CERT_PATH="idbi/certificates/nginx" \
+  -e VAULT_MOUNT_POINT="idbi" \
+  -e VAULT_KEY="certificates/nginx" \
   -e VAULT_TOKEN="..." \
   -e DOMAIN="example.com" \
   -e EMAIL="admin@example.com" \
