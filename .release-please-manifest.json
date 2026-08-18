@@ -1,9 +1,8 @@
 {
-  "certbot-renewal": "0.3.1",
-  "node-builder": "0.3.2",
+  "certbot-renewal": "2.0.0",
+  "node-builder": "0.4.0",
   "php-builder": "0.4.2",
   "ssh-agent": "1.0.0",
   "php-fpm": "1.0.3",
-  "php-nginx": "1.0.1",
+  "php-nginx": "1.0.2",
   "node-runtime": "1.0.0"
-}

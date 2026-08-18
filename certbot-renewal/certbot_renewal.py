@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import subprocess
@@ -13,12 +14,23 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import hvac
 import requests
 from cryptography import x509
 
 logger = logging.getLogger(__name__)
+
+TRACE = 5
+LOG_LEVELS = {
+    "TRACE": TRACE,
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
 
 LETSENCRYPT_CONFIG_DIR = Path("/etc/letsencrypt")
 LETSENCRYPT_WORK_DIR = Path("/var/lib/letsencrypt")
@@ -53,8 +65,8 @@ class Config:
     """Validated configuration with credentials excluded from representations."""
 
     vault_addr: str
-    vault_cert_mount: str
-    vault_cert_secret_path: str
+    vault_mount_point: str
+    vault_key: str
     domain: str
     email: str
     vault_role: str = "certbot-renewal"
@@ -67,12 +79,12 @@ class Config:
     @classmethod
     def from_env(cls, environment: Mapping[str, str] | None = None) -> Config:
         env = os.environ if environment is None else environment
-        raw_cert_path = _required(env, "VAULT_CERT_PATH").strip("/")
-        mount, separator, secret_path = raw_cert_path.partition("/")
-        if not separator or not mount or not secret_path.strip("/"):
-            raise ConfigurationError(
-                "VAULT_CERT_PATH must contain a KV v2 mount and secret path"
-            )
+        vault_mount_point = _required(env, "VAULT_MOUNT_POINT").strip("/")
+        vault_key = _required(env, "VAULT_KEY").strip("/")
+        if not vault_mount_point:
+            raise ConfigurationError("VAULT_MOUNT_POINT must not be empty")
+        if not vault_key:
+            raise ConfigurationError("VAULT_KEY must not be empty")
 
         raw_threshold = env.get("DAYS_THRESHOLD", "30").strip()
         try:
@@ -98,8 +110,8 @@ class Config:
         cacert = env.get("VAULT_CACERT", "").strip()
         return cls(
             vault_addr=_required(env, "VAULT_ADDR"),
-            vault_cert_mount=mount,
-            vault_cert_secret_path=secret_path.strip("/"),
+            vault_mount_point=vault_mount_point,
+            vault_key=vault_key,
             domain=_required(env, "DOMAIN"),
             email=_required(env, "EMAIL"),
             vault_role=vault_role,
@@ -118,8 +130,95 @@ def _required(environment: Mapping[str, str], name: str) -> str:
     return value
 
 
+def _configure_logging(environment: Mapping[str, str]) -> None:
+    raw_level = environment.get("LOG_LEVEL", "INFO").strip().upper()
+    level = LOG_LEVELS.get(raw_level)
+    if level is None:
+        supported = ", ".join(LOG_LEVELS)
+        raise ConfigurationError(f"LOG_LEVEL must be one of: {supported}")
+
+    logging.addLevelName(TRACE, "TRACE")
+    logging.basicConfig(
+        # Keep dependency loggers at INFO or above; some HTTP/AWS libraries may
+        # expose more context than this application can safely sanitize.
+        level=max(level, logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+    logger.setLevel(level)
+    logger.debug("Logging initialized at %s level", raw_level)
+
+
+def _trace(message: str, *args: Any) -> None:
+    logger.log(TRACE, message, *args)
+
+
+def _secret_marker(name: str, value: str) -> str:
+    """Return a stable token marker with only a small prefix and suffix visible."""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    if len(value) > 8:
+        marked = f"{value[:4]}...{value[-4:]}"
+    elif len(value) > 2:
+        marked = f"{value[:1]}...{value[-1:]}"
+    else:
+        marked = "***" if value else "<empty>"
+    return f"<{name}:{marked} length={len(value)} sha256={digest}>"
+
+
+def _redact(value: object, secrets: tuple[str, ...] = ()) -> str:
+    sanitized = " ".join(str(value).split())
+    for secret in secrets:
+        if secret:
+            sanitized = sanitized.replace(secret, "<redacted>")
+    return sanitized
+
+
+def _safe_url(value: str) -> str:
+    """Remove credentials, query parameters, and fragments from a logged URL."""
+    parsed = urlsplit(value)
+    hostname = parsed.hostname or ""
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    netloc = hostname
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+
+
+def _log_remote_error(
+    operation: str,
+    exc: Exception,
+    *,
+    secrets: tuple[str, ...] = (),
+) -> None:
+    detail = _redact(exc, secrets) or "no error details returned"
+    logger.debug("%s failed: %s: %s", operation, type(exc).__name__, detail)
+
+    request = getattr(exc, "request", None)
+    response = getattr(exc, "response", None)
+    method = getattr(exc, "method", None) or getattr(request, "method", None)
+    url = getattr(exc, "url", None) or getattr(request, "url", None)
+    status_code = getattr(exc, "status_code", None) or getattr(
+        response, "status_code", None
+    )
+    _trace(
+        "%s failure metadata: method=%s url=%s status=%s",
+        operation,
+        method or "unknown",
+        _safe_url(_redact(url, secrets)) if url else "unknown",
+        status_code if status_code is not None else "unknown",
+    )
+
+
 def _vault_client(config: Config, token: str | None = None) -> hvac.Client:
     verify: bool | str = str(config.vault_cacert) if config.vault_cacert else True
+    logger.debug(
+        "Creating Vault client: address=%s tls_verify=%s token_supplied=%s",
+        _safe_url(config.vault_addr),
+        verify,
+        token is not None,
+    )
+    if token is not None:
+        _trace("Static Vault token: %s", _secret_marker("vault-token", token))
     return hvac.Client(url=config.vault_addr, token=token, verify=verify)
 
 
@@ -142,16 +241,35 @@ def _client_token(response: Any) -> str:
 
 
 def authenticate_with_kubernetes(config: Config) -> AuthenticatedVaultClient:
+    logger.debug(
+        "Reading Kubernetes ServiceAccount JWT: path=%s role=%s auth_mount=%s",
+        config.vault_jwt_path,
+        config.vault_role,
+        config.vault_auth_path,
+    )
     try:
         jwt = config.vault_jwt_path.read_text(encoding="utf-8").strip()
     except OSError as exc:
+        logger.debug(
+            "Unable to read Kubernetes ServiceAccount JWT at %s: %s: %s",
+            config.vault_jwt_path,
+            type(exc).__name__,
+            _redact(exc),
+        )
         raise VaultAuthenticationError(
             "Unable to read the Kubernetes ServiceAccount JWT"
         ) from exc
     if not jwt:
         raise VaultAuthenticationError("The Kubernetes ServiceAccount JWT is empty")
 
+    _trace("Kubernetes JWT: %s", _secret_marker("kubernetes-jwt", jwt))
     client = _vault_client(config)
+    logger.debug(
+        "Vault remote call: POST %s/v1/auth/%s/login role=%s",
+        _safe_url(config.vault_addr).rstrip("/"),
+        config.vault_auth_path,
+        config.vault_role,
+    )
     try:
         response = client.auth.kubernetes.login(
             role=config.vault_role,
@@ -159,8 +277,13 @@ def authenticate_with_kubernetes(config: Config) -> AuthenticatedVaultClient:
             mount_point=config.vault_auth_path,
         )
         token = _client_token(response)
+        _trace(
+            "Vault Kubernetes login returned a client token: %s",
+            _secret_marker("vault-token", token),
+        )
         del response
     except (hvac.exceptions.VaultError, requests.exceptions.RequestException) as exc:
+        _log_remote_error("Vault Kubernetes login", exc, secrets=(jwt,))
         raise VaultAuthenticationError(
             "Vault Kubernetes authentication request failed"
         ) from exc
@@ -181,9 +304,14 @@ def authenticate_with_static_token(config: Config) -> AuthenticatedVaultClient:
         raise VaultAuthenticationError("No static Vault token is configured")
 
     client = _vault_client(config, token=token)
+    logger.debug(
+        "Vault remote call: GET %s/v1/auth/token/lookup-self",
+        _safe_url(config.vault_addr).rstrip("/"),
+    )
     try:
         client.auth.token.lookup_self()
     except (hvac.exceptions.VaultError, requests.exceptions.RequestException) as exc:
+        _log_remote_error("Vault static-token lookup", exc, secrets=(token,))
         raise VaultAuthenticationError("Vault static-token validation failed") from exc
 
     return AuthenticatedVaultClient(
@@ -194,10 +322,18 @@ def authenticate_with_static_token(config: Config) -> AuthenticatedVaultClient:
 
 
 def authenticate(config: Config) -> AuthenticatedVaultClient:
-    kubernetes_detected = bool(os.getenv("KUBERNETES_SERVICE_HOST")) or (
-        config.vault_jwt_path.exists()
-    )
+    service_host_present = bool(os.getenv("KUBERNETES_SERVICE_HOST"))
+    jwt_path_exists = config.vault_jwt_path.exists()
+    kubernetes_detected = service_host_present or jwt_path_exists
     kubernetes_error: VaultAuthenticationError | None = None
+    logger.debug(
+        "Authentication discovery: kubernetes_service_host=%s jwt_path=%s "
+        "jwt_exists=%s static_fallback=%s",
+        service_host_present,
+        config.vault_jwt_path,
+        jwt_path_exists,
+        config.vault_token is not None,
+    )
 
     if kubernetes_detected:
         logger.info("Kubernetes detected; attempting Vault Kubernetes authentication")
@@ -206,15 +342,17 @@ def authenticate(config: Config) -> AuthenticatedVaultClient:
         except VaultAuthenticationError as exc:
             kubernetes_error = exc
             logger.warning(
-                "Vault Kubernetes authentication failed; checking configured fallback"
+                "Vault Kubernetes authentication failed (%s); checking configured "
+                "fallback",
+                exc,
             )
 
     if config.vault_token:
         logger.info("Attempting Vault static-token authentication")
         try:
             return authenticate_with_static_token(config)
-        except VaultAuthenticationError:
-            logger.error("Vault static-token authentication failed")
+        except VaultAuthenticationError as exc:
+            logger.error("Vault static-token authentication failed: %s", exc)
             raise
 
     if kubernetes_error is not None:
@@ -228,10 +366,16 @@ def authenticate(config: Config) -> AuthenticatedVaultClient:
 
 
 def read_stored_certificate(client: hvac.Client, config: Config) -> str | None:
+    logger.debug(
+        "Vault remote call: GET %s/v1/%s/data/%s",
+        _safe_url(config.vault_addr).rstrip("/"),
+        config.vault_mount_point,
+        config.vault_key,
+    )
     try:
         response = client.secrets.kv.v2.read_secret_version(
-            mount_point=config.vault_cert_mount,
-            path=config.vault_cert_secret_path,
+            mount_point=config.vault_mount_point,
+            path=config.vault_key,
         )
     except hvac.exceptions.InvalidPath:
         return None
@@ -338,9 +482,15 @@ def store_certificate(
     fullchain: str,
     privkey: str,
 ) -> None:
+    logger.debug(
+        "Vault remote call: POST %s/v1/%s/data/%s",
+        _safe_url(config.vault_addr).rstrip("/"),
+        config.vault_mount_point,
+        config.vault_key,
+    )
     client.secrets.kv.v2.create_or_update_secret(
-        mount_point=config.vault_cert_mount,
-        path=config.vault_cert_secret_path,
+        mount_point=config.vault_mount_point,
+        path=config.vault_key,
         secret={"fullchain": fullchain, "privkey": privkey},
     )
 
@@ -370,33 +520,38 @@ def run(config: Config) -> None:
         renew_and_store(authenticated.client, config)
     finally:
         if authenticated is not None and authenticated.revoke_on_exit:
+            logger.debug("Vault remote call: POST auth/token/revoke-self")
             try:
                 authenticated.client.auth.token.revoke_self()
-            except Exception:
+            except Exception as exc:
                 logger.warning("Unable to revoke the temporary Vault token")
+                _log_remote_error("Vault token revocation", exc)
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-    )
     try:
+        _configure_logging(os.environ)
         run(Config.from_env())
     except (ConfigurationError, VaultAuthenticationError) as exc:
         logger.error("%s", exc)
         return 1
-    except subprocess.CalledProcessError:
-        logger.error("Certbot failed")
+    except subprocess.CalledProcessError as exc:
+        logger.error("Certbot failed with exit code %s", exc.returncode)
         return 1
     except CertificateFileError as exc:
         logger.error("%s", exc)
         return 1
-    except (hvac.exceptions.VaultError, requests.exceptions.RequestException):
+    except (hvac.exceptions.VaultError, requests.exceptions.RequestException) as exc:
         logger.error("Vault certificate operation failed")
+        _log_remote_error("Vault certificate operation", exc)
         return 1
-    except OSError:
+    except OSError as exc:
         logger.error("A local certificate operation failed")
+        logger.debug(
+            "Local certificate operation failed: %s: %s",
+            type(exc).__name__,
+            _redact(exc),
+        )
         return 1
     return 0
 
