@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/idbi/id-docker/compare/node-builder@v0.4.0...node-builder@v1.0.0) (2026-08-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* introduce multi-version builds for Node.js components using `variants.json`
+
+### Features
+
+* introduce multi-version builds for Node.js components using `variants.json` ([c289da7](https://github.com/idbi/id-docker/commit/c289da7f6143eb0547fc9bf8cfdcc7593c3eb607))
+
 ## [0.4.0](https://github.com/idbi/id-docker/compare/node-builder@v0.3.2...node-builder@v0.4.0) (2026-08-12)
 
 
