@@ -11,6 +11,7 @@ Published components are registered in both the root documentation and the Relea
 - Keep changes scoped to the affected component unless shared release automation or root documentation must change.
 - Treat every component directory as a self-contained build context. Dockerfile `COPY` sources must be relative to that component directory.
 - Prefer pinned major or exact dependency versions over floating `latest` tags when changing production base images or downloaded tools.
+- A component that ships several base versions declares them in `<component>/variants.json` rather than duplicating the directory; keep the `Dockerfile`'s `ARG` default equal to `default` there, so a plain `docker build` reproduces the `latest` image.
 - Preserve non-root execution, health checks, signal handling, and writable-directory ownership in runtime images.
 - Do not commit credentials, private keys, certificates, generated ACME state, or registry tokens.
 - Keep a component's `README.md` aligned with its ports, environment variables, build examples, runtime behavior, and verification commands.
@@ -33,6 +34,12 @@ docker compose -f traefik/docker-compose.yml config
 # Check Release Please JSON when release configuration changes.
 jq empty release-please-config.json .release-please-manifest.json
 
+# Check a component's variant declaration when it changes.
+jq empty <component>/variants.json
+
+# Build each variant of a multi-version component.
+docker build --build-arg NODE_VERSION=24 -t local/node-runtime:node24 ./node-runtime
+
 # Exercise release-tag discovery when release automation changes.
 ./.github/scripts/validate-releases.sh
 ```
@@ -45,6 +52,7 @@ For a publishable image:
 
 1. Add `<component>/Dockerfile`, `<component>/README.md`, and `<component>/CHANGELOG.md`.
 2. Put runtime configuration copied by the Dockerfile inside the component directory, conventionally under `<component>/docker/`.
+   To publish several base versions from that one directory, add `<component>/variants.json` with `build_arg`, `default`, and a `variants` list of `{value, suffix}`; the publish pipeline builds one image per entry and appends `-<suffix>` to each tag, with `default` also taking the unsuffixed tags. See the root `README.md` for the tag matrix.
 3. Register the component in `release-please-config.json` using the directory name as both the package key and `component` value.
 4. Update the root `README.md` component list and repository tree.
 5. Leave `.release-please-manifest.json` to Release Please for a new component unless explicitly asked to initialize release state.

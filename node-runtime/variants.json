@@ -1,0 +1,10 @@
+{
+  "build_arg": "NODE_VERSION",
+  "default": "22",
+  "variants": [
+    { "value": "18", "suffix": "node18" },
+    { "value": "20", "suffix": "node20" },
+    { "value": "22", "suffix": "node22" },
+    { "value": "24", "suffix": "node24" }
+  ]
+}

@@ -16,10 +16,12 @@ A production-ready PHP 8.3 FPM (Alpine) runtime image tuned for Laravel. Ships h
 A production-ready nginx (Alpine) front end for the `php-fpm` runtime. Serves a Laravel app's static assets from `/app/public` and reverse-proxies PHP requests to a separate php-fpm container over FastCGI. Ships gzip, static-asset caching, security headers, and an internal healthcheck; runs non-root on port 8080.
 
 ### **node-builder**
-A Node.js 22 (Alpine) + OpenJDK 17 build image for applications requiring both Node.js and Java. Ships a full `node-gyp` toolchain, `git`, and `rsync` for multi-language CI/CD workflows. Pairs with `node-runtime` (runtime) — both share the same Alpine base and Node major so build artifacts are binary compatible.
+A Node.js + OpenJDK 17 build image (Alpine) for applications requiring both Node.js and Java. Ships a full `node-gyp` toolchain, `git`, and `rsync` for multi-language CI/CD workflows. Published for **Node 18, 20, 22 and 24** (`:node18` … `:node24`; `:latest` = 22). Pairs with `node-runtime` (runtime) — same Alpine base and the same set of Node majors, so build artifacts are binary compatible when both tags name the same major.
 
 ### **node-runtime**
-A production-ready Node.js 22 (Alpine) runtime image tuned for Next.js apps built with `output: 'standalone'`. Ships `dumb-init` for graceful shutdown, an HTTP healthcheck, and runs non-root on port 3000. Pairs with `node-builder` (build) — apps extend it via `FROM` and need no web-server sidecar.
+A production-ready Node.js runtime image (Alpine) tuned for Next.js apps built with `output: 'standalone'`. Ships `dumb-init` for graceful shutdown, an HTTP healthcheck, and runs non-root on port 3000. Published for **Node 18, 20, 22 and 24** (`:node18` … `:node24`; `:latest` = 22). Pairs with `node-builder` (build) — apps extend it via `FROM` and need no web-server sidecar.
+
+> Node 18 and 20 are past upstream end-of-life and get no further security patches; they are published for migration only. Start new services on `:node24`.
 
 ### **certbot-renewal**
 An automated TLS/SSL certificate renewal solution using Certbot with DNS-01 validation (AWS Route53) and secure upload to HashiCorp Vault. Designed for Kubernetes CronJobs and standalone automation.
@@ -50,11 +52,13 @@ docker/
 ├── node-builder/
 │   ├── Dockerfile
 │   ├── README.md
-│   └── CHANGELOG.md
+│   ├── CHANGELOG.md
+│   └── variants.json             # builds one image per Node major
 ├── node-runtime/
 │   ├── Dockerfile
 │   ├── README.md
 │   ├── CHANGELOG.md
+│   ├── variants.json             # builds one image per Node major
 │   └── docker/
 ├── ssh-agent/
 │   ├── Dockerfile
@@ -134,6 +138,27 @@ Each release publishes three tags for the component — the exact version, the m
 - `ghcr.io/idbi/docker-php-fpm:latest` — Latest stable release
 
 All images are built for `linux/amd64` only, with build provenance and an SBOM attached and attested to the registry.
+
+### Variants (several base versions from one component)
+
+A component that must ship more than one base version — `node-runtime` and `node-builder`, one image per Node major — declares a `variants.json` beside its `Dockerfile`:
+
+```json
+{
+  "build_arg": "NODE_VERSION",
+  "default": "22",
+  "variants": [
+    { "value": "18", "suffix": "node18" },
+    { "value": "22", "suffix": "node22" }
+  ]
+}
+```
+
+`validate-releases.sh` expands the component into one build per variant, passing `build_arg=value` to `docker build` and publishing the three tags above with the variant's `suffix` appended:
+
+- `ghcr.io/idbi/docker-node-runtime:1.0.0-node18`, `:1-node18`, `:node18`
+
+The variant named by `default` **additionally** takes the unsuffixed `:1.0.0`, `:1` and `:latest` tags, so `latest` always points at one designated base version rather than whichever build finished last. Components without a `variants.json` are built exactly as before.
 
 ### Triggering a Release
 

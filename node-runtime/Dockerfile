@@ -5,8 +5,20 @@
 # the artifacts into a stage based on this image. Nothing else is needed to
 # serve traffic: the standalone server handles static assets itself, so no
 # nginx sidecar is required.
+#
+# One Dockerfile, one image per Node major. `NODE_VERSION` selects the base;
+# `variants.json` lists the majors CI builds and which one owns the unsuffixed
+# tags. The default here is that same major, so a plain `docker build` with no
+# `--build-arg` reproduces the `:latest` image.
 
-FROM node:22-alpine
+ARG NODE_VERSION=22
+
+FROM node:${NODE_VERSION}-alpine
+
+# Redeclared: an ARG stated before the first FROM is in scope only for FROM
+# lines. This second declaration inherits the value already passed and makes it
+# usable in the build below.
+ARG NODE_VERSION
 
 # dumb-init: a real PID 1 that reaps zombies and forwards SIGTERM to the app,
 #   so `docker stop` / Kubernetes termination shuts down gracefully instead of
@@ -14,6 +26,10 @@ FROM node:22-alpine
 # libc6-compat: musl shim for the prebuilt glibc-linked native binaries Next
 #   pulls in (@next/swc, and sharp when next/image optimization is used).
 RUN apk add --no-cache dumb-init libc6-compat
+
+# Records which base this image was built from, so the Node major is readable
+# from `docker inspect` without running the image.
+LABEL org.opencontainers.image.base.name="docker.io/library/node:${NODE_VERSION}-alpine"
 
 # Runtime knobs. Override at runtime (docker `-e` / Kubernetes env).
 # HOSTNAME=0.0.0.0 is required: the Next standalone server binds localhost

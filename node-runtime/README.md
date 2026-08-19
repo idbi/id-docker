@@ -1,10 +1,14 @@
 # Node.js Runtime for Next.js Applications
 
-A production-ready Docker image based on **Node.js 22 (Alpine)**, tuned to run **Next.js**
-applications built with [`output: 'standalone'`](https://nextjs.org/docs/app/api-reference/config/next-config-js/output).
+A production-ready Docker image based on **Alpine**, published for **Node 18, 20, 22 and
+24**, and tuned to run **Next.js** applications built with
+[`output: 'standalone'`](https://nextjs.org/docs/app/api-reference/config/next-config-js/output).
 It ships `dumb-init` for correct signal handling, an HTTP healthcheck that follows the
 configured port, sane production defaults, and runs as a **non-root** user on port **3000**
 out of the box.
+
+Every Node major is built from this one Dockerfile — see [Node versions](#node-versions) for
+the tag matrix and support status.
 
 ### What is node-runtime?
 
@@ -13,9 +17,10 @@ out of the box.
 dependencies and compiles the app; `node-runtime` is the lean image that actually serves
 traffic in production.
 
-The two are deliberately kept on the **same base** — Alpine (musl) and Node 22 — so
-artifacts built in one are binary compatible with the other. Plain `node:22-alpine` works
-equally well as a build stage; see [libc parity](#libc-parity) for why the base matters.
+The two are published from the **same base** — Alpine (musl) — and for the **same set of
+Node majors**, so artifacts built on one are binary compatible with the other as long as you
+pick matching tags. Plain `node:<major>-alpine` works equally well as a build stage; see
+[libc parity](#libc-parity) for why the base matters.
 
 This image deliberately carries **no application code**. You build your app in a separate
 stage and `COPY` the Next.js standalone artifacts into a downstream image
@@ -38,9 +43,9 @@ static assets and renders pages itself, so one container is the whole web tier.
 ## Features
 
 ### Core
-- **Node.js 22 LTS** on **Alpine** — small image, fast cold starts. The major version is
-  **pinned**, so a Node upgrade is an explicit change to this image, never a silent base
-  drift on rebuild.
+- **Node 18 / 20 / 22 / 24** on **Alpine** — small image, fast cold starts. Each image
+  **pins one major**, so a Node upgrade is an explicit change to the tag you deploy, never a
+  silent base drift on rebuild.
 - **Non-root**: runs as the `node` user (uid `1000`) on port **`3000`**, so it works under
   restricted Kubernetes Pod Security policies without extra privileges.
 - **Working directory**: `/app`, with `/app/.next/cache` pre-created and writable so ISR
@@ -72,23 +77,67 @@ static assets and renders pages itself, so one container is the whole web tier.
 
 ---
 
+## Node versions
+
+One image is published per supported Node major. They are identical apart from the base:
+same entrypoint, healthcheck, user, port and environment defaults.
+
+| Node | Tag | Upstream status | Upstream EOL |
+| ---- | --- | --------------- | ------------ |
+| 24 | `:node24` | Active LTS | 2028-04-30 |
+| 22 | `:node22` — also `:latest` | Maintenance LTS | 2027-04-30 |
+| 20 | `:node20` | **End of life** | 2026-04-30 |
+| 18 | `:node18` | **End of life** | 2025-04-30 |
+
+> **Node 18 and 20 are past their upstream end-of-life** and receive no further security
+> patches from the Node project — including for vulnerabilities found in the runtime itself.
+> They are published here only to keep existing services building while they are migrated.
+> Use `:node24` for anything new, and treat a `:node18` / `:node20` deployment as a
+> migration you have not finished yet.
+
+Alpine and the bundled npm also track the base image, so the older majors ship
+correspondingly older toolchains (Node 18 ships npm 10, Node 24 ships npm 11).
+
+### Choosing a tag
+
+Pin the **Node major** in your `FROM` line — `:node22`, not `:latest`. The unsuffixed tags
+follow whichever major this repository designates as the default (currently **22**, set by
+`default` in `node-runtime/variants.json`), so a future change of default would move
+`:latest` to a new Node major under any image that tracks it.
+
+Pin the **image version** too for reproducible rebuilds: `:1.0.0-node22` never changes,
+`:1-node22` gets patches within major 1, `:node22` follows every release.
+
+---
+
 ## Usage
 
 ### Pull from GitHub Container Registry
 
 ```sh
-docker pull ghcr.io/idbi/docker-node-runtime:latest
+docker pull ghcr.io/idbi/docker-node-runtime:node22   # pin the Node major
+docker pull ghcr.io/idbi/docker-node-runtime:latest   # == :node22 today
 ```
 
-**Available tags:**
-- `ghcr.io/idbi/docker-node-runtime:latest` — Latest stable release
-- `ghcr.io/idbi/docker-node-runtime:X.Y.Z` — Specific version
-- `ghcr.io/idbi/docker-node-runtime:X` — Latest patch for a major version
+**Available tags** — each release publishes, for every Node major:
+- `ghcr.io/idbi/docker-node-runtime:X.Y.Z-node22` — Exact image version, on Node 22
+- `ghcr.io/idbi/docker-node-runtime:X-node22` — Latest patch of image major `X`, on Node 22
+- `ghcr.io/idbi/docker-node-runtime:node22` — Latest release, on Node 22
+
+…and the same three shapes for `node18`, `node20` and `node24`. The default major
+additionally takes the unsuffixed tags:
+- `ghcr.io/idbi/docker-node-runtime:latest` — Latest stable release, on the default major (22)
+- `ghcr.io/idbi/docker-node-runtime:X.Y.Z` — Specific version, on the default major
+- `ghcr.io/idbi/docker-node-runtime:X` — Latest patch for image major `X`, on the default major
 
 ### Build Locally
 
 ```sh
+# Default major (22), identical to what :latest is built from
 docker build -t node-runtime:latest ./node-runtime
+
+# A specific major
+docker build --build-arg NODE_VERSION=24 -t node-runtime:node24 ./node-runtime
 ```
 
 ### Recommended: multi-stage build for your app
@@ -105,14 +154,15 @@ Then build in one stage and copy the artifacts into this image:
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM ghcr.io/idbi/docker-node-builder:latest AS build
+# Same Node major on both stages — see "libc parity" below.
+FROM ghcr.io/idbi/docker-node-builder:node22 AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM ghcr.io/idbi/docker-node-runtime:latest
+FROM ghcr.io/idbi/docker-node-runtime:node22
 # The standalone bundle: server.js + a pruned node_modules.
 COPY --from=build --chown=node:node /app/.next/standalone ./
 # `standalone` does NOT include these two — they must be copied separately.
@@ -136,15 +186,26 @@ This image is **Alpine (musl)**, and the standalone bundle carries native packag
 them for the platform it installs *on*, so the build stage's base image decides what ends up
 in `node_modules`.
 
-`node-builder` and `node-runtime` are both Alpine + Node 22 precisely so this lines up. If
-you substitute a **glibc** build stage (`node:22`, `node:22-slim`, or any Debian/Ubuntu
-image), the result is a mismatch: `sharp` silently degrades to its much slower WASM
-fallback, and native addons without a fallback fail to load outright. Keep the build stage
-on Alpine, or run that app on a Debian-based runtime instead of this image.
+`node-builder` and `node-runtime` are both Alpine, and both publish the same Node majors,
+precisely so this lines up. If you substitute a **glibc** build stage (`node:22`,
+`node:22-slim`, or any Debian/Ubuntu image), the result is a mismatch: `sharp` silently
+degrades to its much slower WASM fallback, and native addons without a fallback fail to load
+outright. Keep the build stage on Alpine, or run that app on a Debian-based runtime instead
+of this image.
 
-The same applies to the **Node major**: build and run on the same one. `node:lts` currently
-resolves to Node 24, which is why `node-builder` pins 22 to match this image rather than
-tracking `lts`.
+The same applies to the **Node major**: build and run on the same one. Because both images
+now ship four majors, this is something you have to line up yourself — `docker-node-builder:node24`
+pairs with `docker-node-runtime:node24`, and mixing them is the mistake to watch for:
+
+```dockerfile
+FROM ghcr.io/idbi/docker-node-builder:node24 AS build   # builds against Node 24 ABI
+...
+FROM ghcr.io/idbi/docker-node-runtime:node20            # runs on Node 20 — native addons break
+```
+
+Avoid `:latest` on either image for this reason: the two resolve independently, and a change
+of default major would silently split the pair. Prefer an explicit `node<major>` tag on both
+stages, or a single `ARG` if you template your Dockerfiles.
 
 ### Running with docker-compose
 
@@ -209,8 +270,11 @@ them here has no effect on the client bundle.
 # Runs as non-root
 docker run --rm node-runtime:latest id                       # -> uid=1000(node) gid=1000(node)
 
-# Node major is pinned to 22
+# Node major matches the tag
 docker run --rm --entrypoint node node-runtime:latest -v     # -> v22.x.y
+docker image inspect node-runtime:latest \
+    --format '{{index .Config.Labels "org.opencontainers.image.base.name"}}'
+                                                             # -> docker.io/library/node:22-alpine
 
 # dumb-init present and wired as the entrypoint
 docker run --rm --entrypoint sh node-runtime:latest -c 'command -v dumb-init'
@@ -270,6 +334,11 @@ A prebuilt glibc binary that `libc6-compat` doesn't cover — almost always caus
 installing dependencies in a Debian image and copying them here. See
 [libc parity](#libc-parity).
 
+### `NODE_MODULE_VERSION` mismatch, or a native addon that fails only at runtime
+The build stage and this image are on **different Node majors** — compiled addons are tied
+to a major's ABI. Match the `node<major>` suffix on both images. See
+[libc parity](#libc-parity).
+
 ### `next/image` optimization is unexpectedly slow
 `sharp` fell back to its WASM build because the installed variant doesn't match musl. Check
 with `docker run --rm <your-image> ls node_modules/@img/` — you want a
@@ -280,7 +349,7 @@ with `docker run --rm <your-image> ls node_modules/@img/` — you want a
 
 ## Image Information
 
-- **Base Image**: `node:22-alpine`
+- **Base Image**: `node:<major>-alpine`, built for majors **18, 20, 22, 24** (`:latest` = 22)
 - **Exposed Port**: `3000` (HTTP)
 - **User**: `node` (non-root, uid `1000`)
 - **Init**: `dumb-init` as PID 1
