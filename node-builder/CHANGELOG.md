@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/idbi/id-docker/compare/node-builder@v1.0.0...node-builder@v1.1.0) (2026-08-20)
+
+
+### Features
+
+* add multi-architecture builds and manifests for Docker images ([0af2021](https://github.com/idbi/id-docker/commit/0af202107e03da3b3c91717b1692d1aa75289ae6))
+
 ## [1.0.0](https://github.com/idbi/id-docker/compare/node-builder@v0.4.0...node-builder@v1.0.0) (2026-08-19)
 
 
