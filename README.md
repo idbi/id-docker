@@ -137,7 +137,7 @@ Each release publishes three tags for the component — the exact version, the m
 - `ghcr.io/idbi/docker-php-fpm:1` — Latest patch for a major version
 - `ghcr.io/idbi/docker-php-fpm:latest` — Latest stable release
 
-All images are built for `linux/amd64` only, with build provenance and an SBOM attached and attested to the registry.
+Every tag is a multi-arch manifest covering `linux/amd64` and `linux/arm64`, so `docker pull` and `FROM` resolve to the right architecture with no `--platform` flag. Each architecture is built on a runner of that architecture rather than under emulation. Build provenance and an SBOM are attached and attested to the registry.
 
 ### Variants (several base versions from one component)
 

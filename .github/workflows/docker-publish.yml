@@ -48,17 +48,34 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-  docker:
-    name: docker (${{ matrix.build.label }})
-    runs-on: ubuntu-latest
+  build:
+    name: build (${{ matrix.build.label }}, ${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
     needs: validate
-    if: fromJson(needs.validate.outputs.builds) != '[]'
+    # Compared as a raw string: `fromJson` would yield an array, which never
+    # string-equals '[]', so the guard would pass and the empty matrix would
+    # fail the job with "does not contain any values".
+    if: needs.validate.outputs.builds != '[]'
     strategy:
-      # One job per image to push. A component with a `variants.json` expands
-      # to several entries here, each with its own build args and tag list.
+      # One job per image *per architecture*. A component with a
+      # `variants.json` expands to several builds, and each of those is then
+      # crossed with the platform list below.
       fail-fast: false
       matrix:
         build: ${{ fromJson(needs.validate.outputs.builds) }}
+        # Each architecture builds on a runner of that architecture rather than
+        # under QEMU. Emulated arm64 would be an order of magnitude slower on
+        # the images that compile from source (php-builder's
+        # `docker-php-ext-install`, php-fpm's `install-php-extensions`,
+        # node-builder's node-gyp toolchain). Hosted arm64 runners are free for
+        # public repositories, which this one is.
+        platform:
+          - arch: amd64
+            docker: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            docker: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,27 +90,123 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.SECRET_TOKEN }}
 
-      - name: Build and push ${{ matrix.build.label }}
+      - name: Build and push ${{ matrix.build.label }} (${{ matrix.platform.arch }})
         id: build
         uses: docker/build-push-action@v5
         with:
           context: ./${{ matrix.build.component }}
-          platforms: linux/amd64
-          push: true
-          # Composed by validate-releases.sh: the variant-suffixed tags, plus
-          # the unsuffixed :version/:major/:latest for the default variant.
-          tags: ${{ matrix.build.tags }}
+          platforms: ${{ matrix.platform.docker }}
           build-args: ${{ matrix.build.build_args }}
-          # Scoped per variant: variants of one component share no layers, and
-          # an unscoped cache lets whichever job finishes last evict the rest.
-          cache-from: type=gha,scope=${{ matrix.build.cache_scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.build.cache_scope }}
+          # Pushed by digest with no tag: a tag here would be claimed by
+          # whichever architecture finished last, leaving single-arch tags in
+          # the registry. The `merge` job below is what publishes the tags,
+          # pointing them at a manifest list covering every architecture.
+          outputs: type=image,name=${{ matrix.build.image }},push-by-digest=true,name-canonical=true,push=true
+          # Scoped per variant *and* per architecture: variants of one component
+          # share no layers, and neither do two architectures, so an unscoped
+          # cache lets whichever job finishes last evict the rest.
+          cache-from: type=gha,scope=${{ matrix.build.cache_scope }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.build.cache_scope }}-${{ matrix.platform.arch }}
           provenance: true
           sbom: true
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          # The digest is carried as the *filename*; the file itself is empty.
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.build.cache_scope }}-${{ matrix.platform.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: merge (${{ matrix.build.label }})
+    runs-on: ubuntu-latest
+    needs: [validate, build]
+    # Compared as a raw string: `fromJson` would yield an array, which never
+    # string-equals '[]', so the guard would pass and the empty matrix would
+    # fail the job with "does not contain any values".
+    if: needs.validate.outputs.builds != '[]'
+    strategy:
+      # Back to one job per image: this collapses that image's per-arch digests
+      # into a single multi-arch manifest list and puts the tags on it.
+      fail-fast: false
+      matrix:
+        build: ${{ fromJson(needs.validate.outputs.builds) }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          # Only this image's architectures. The `-` before the wildcard keeps
+          # one cache scope from matching another that it prefixes.
+          pattern: digest-${{ matrix.build.cache_scope }}-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.SECRET_TOKEN }}
+
+      - name: Create multi-arch manifest for ${{ matrix.build.label }}
+        id: manifest
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ matrix.build.image }}
+          # Composed by validate-releases.sh: the variant-suffixed tags, plus
+          # the unsuffixed :version/:major/:latest for the default variant.
+          TAGS: ${{ matrix.build.tags }}
+        run: |
+          shopt -s nullglob
+
+          tag_args=()
+          primary=""
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            tag_args+=(--tag "$tag")
+            [ -z "$primary" ] && primary="$tag"
+          done <<< "$TAGS"
+
+          if [ ${#tag_args[@]} -eq 0 ]; then
+            echo "No tags composed for ${IMAGE}" >&2
+            exit 1
+          fi
+
+          # One source per architecture, named by the digest the matching build
+          # job pushed.
+          sources=()
+          for digest in *; do
+            sources+=("${IMAGE}@sha256:${digest}")
+          done
+
+          if [ ${#sources[@]} -eq 0 ]; then
+            echo "No per-arch digests downloaded for ${IMAGE}" >&2
+            exit 1
+          fi
+
+          printf 'Assembling %s from %d architecture(s)\n' "$IMAGE" "${#sources[@]}"
+          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
+
+          # Every tag now resolves to the same manifest list; read its digest
+          # back off one of them for the attestation subject below.
+          digest=$(docker buildx imagetools inspect "$primary" \
+            --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v1
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.build.component }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-name: ${{ matrix.build.image }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true

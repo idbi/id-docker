@@ -10,8 +10,10 @@ set -euo pipefail
 # Node major per image). A component without that file produces exactly one
 # build, tagged as it always has been.
 #
-# Every entry carries its own fully composed `tags` list, so the tag policy
-# lives here rather than being split across this script and the workflow.
+# Every entry carries its own fully composed `tags` list plus the bare `image`
+# name, so the tag policy lives here rather than being split across this script
+# and the workflow. CI needs both: the per-arch build jobs push by digest under
+# `image`, and the merge job stitches those digests into `tags`.
 
 # Match the workflow's env; defaults keep the script runnable locally.
 REGISTRY="${REGISTRY:-ghcr.io}"
@@ -76,6 +78,7 @@ for comp in $COMPONENTS; do
           | (.suffix // error("\($comp)/variants.json: variant \($value) has no \"suffix\"")) as $suffix
           | {
               component: $comp,
+              image: $image,
               version: $version,
               major: $major,
               variant: $value,
@@ -108,6 +111,7 @@ for comp in $COMPONENTS; do
       --arg version "$version" --arg major "$major" '
       [{
         component: $comp,
+        image: $image,
         version: $version,
         major: $major,
         variant: "",

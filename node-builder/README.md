@@ -34,7 +34,7 @@ runtime **when the two tags name the same major**. See
 
 ### Why Alpine and why pinned
 
-Both choices exist to keep this image binary compatible with
+These choices all exist to keep this image binary compatible with
 [`node-runtime`](../node-runtime):
 
 - **Alpine (musl)**: npm resolves platform-specific prebuilt binaries — `sharp`,
@@ -45,6 +45,10 @@ Both choices exist to keep this image binary compatible with
   Building with a different Node major than the runtime executes can produce incompatible
   output, so every tag here pins exactly one major, and the same four majors are published
   for `node-runtime`. Choosing the pair is up to you — see [Node versions](#node-versions).
+- **Both architectures**: this image and `node-runtime` are each published for `linux/amd64`
+  and `linux/arm64`, so the two stages of a multi-stage build land on the same architecture
+  by default and native binaries stay compatible. Pinning `--platform` on only one of the
+  stages breaks that, in the same way a libc mismatch does.
 
 Because Alpine publishes fewer prebuilt binaries than Debian, compile-from-source happens
 more often on musl — hence the bundled `python3`/`make`/`g++`, without which those installs
@@ -187,7 +191,7 @@ in this image rather than copying a tree built on Debian/Ubuntu.
 - **Java**: OpenJDK 17 (JRE)
 - **User**: `root` (build image — the runtime image is the non-root one)
 - **Working Directory**: `/app`
-- **Architectures**: `linux/amd64`
+- **Architectures**: `linux/amd64`, `linux/arm64` (multi-arch manifest)
 - **Version**: see [CHANGELOG.md](CHANGELOG.md) for release history
 
 ---

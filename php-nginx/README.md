@@ -251,7 +251,7 @@ readable by that user (e.g. `COPY --chown=nginx:nginx`).
 - **Base Image**: `nginx:alpine`
 - **Exposed Port**: `8080` (HTTP)
 - **User**: `nginx` (non-root)
-- **Architectures**: `linux/amd64`
+- **Architectures**: `linux/amd64`, `linux/arm64` (multi-arch manifest)
 - **Version**: see [CHANGELOG.md](CHANGELOG.md) for release history
 
 ---

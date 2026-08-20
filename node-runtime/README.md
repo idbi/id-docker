@@ -203,6 +203,14 @@ FROM ghcr.io/idbi/docker-node-builder:node24 AS build   # builds against Node 24
 FROM ghcr.io/idbi/docker-node-runtime:node20            # runs on Node 20 — native addons break
 ```
 
+The **CPU architecture** is the third axis, and the one you normally do not have to think
+about. Both images are published for `linux/amd64` and `linux/arm64`, so a multi-stage build
+resolves both stages to the host's architecture and the prebuilt binaries match. It only
+becomes a hazard if you pin one stage's platform by hand — `FROM --platform=linux/amd64` on
+the build stage while the runtime stage resolves to arm64 leaves x86-64 native binaries in
+`node_modules`, which fail to load. Either pin both stages to the same platform or, better,
+pin neither.
+
 Avoid `:latest` on either image for this reason: the two resolve independently, and a change
 of default major would silently split the pair. Prefer an explicit `node<major>` tag on both
 stages, or a single `ARG` if you template your Dockerfiles.
@@ -353,7 +361,7 @@ with `docker run --rm <your-image> ls node_modules/@img/` — you want a
 - **Exposed Port**: `3000` (HTTP)
 - **User**: `node` (non-root, uid `1000`)
 - **Init**: `dumb-init` as PID 1
-- **Architectures**: `linux/amd64`
+- **Architectures**: `linux/amd64`, `linux/arm64` (multi-arch manifest)
 - **Version**: see [CHANGELOG.md](CHANGELOG.md) for release history
 
 ---

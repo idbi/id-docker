@@ -297,4 +297,5 @@ docker run -it --rm -v $PWD:/app php-builder:latest \
 - **Base Image**: `php:8.3-cli`
 - **Size**: Optimized and minimal (see CHANGELOG for details)
 - **Security**: Regular updates and patches applied
+- **Architectures**: `linux/amd64`, `linux/arm64` (multi-arch manifest)
 - **Version**: Check [CHANGELOG.md](CHANGELOG.md) for release history

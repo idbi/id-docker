@@ -306,7 +306,7 @@ volume, or a system temp dir other than `/tmp`.
 - **Base Image**: `php:8.3-fpm-alpine`
 - **Exposed Port**: `9000` (FastCGI)
 - **User**: `www-data` (non-root)
-- **Architectures**: `linux/amd64`
+- **Architectures**: `linux/amd64`, `linux/arm64` (multi-arch manifest)
 - **Version**: see [CHANGELOG.md](CHANGELOG.md) for release history
 
 ---

@@ -4,13 +4,14 @@
 
 This repository is a monorepo of independently built Docker images. Each image lives in its own top-level component directory and uses that directory as its Docker build context. `traefik/` contains deployment configuration only and is not a published image.
 
-Published components are registered in both the root documentation and the Release Please configuration. CI publishes images to GHCR for `linux/amd64` when Release Please creates a component tag such as `node-runtime@v1.2.3`.
+Published components are registered in both the root documentation and the Release Please configuration. CI publishes images to GHCR as multi-arch manifests covering `linux/amd64` and `linux/arm64` when Release Please creates a component tag such as `node-runtime@v1.2.3`. Each architecture is built natively on a runner of that architecture and pushed by digest; a merge job then assembles the per-architecture digests into one manifest list per tag.
 
 ## Working conventions
 
 - Keep changes scoped to the affected component unless shared release automation or root documentation must change.
 - Treat every component directory as a self-contained build context. Dockerfile `COPY` sources must be relative to that component directory.
 - Prefer pinned major or exact dependency versions over floating `latest` tags when changing production base images or downloaded tools.
+- Keep Dockerfiles architecture-neutral: every image is published for both `linux/amd64` and `linux/arm64`. Install tools from the base distribution's package manager where possible, and when a binary must be downloaded directly, select it with the `TARGETARCH`/`TARGETPLATFORM` build args rather than hardcoding `amd64`/`x86_64` in the URL. Any base or copied-from image must itself publish both architectures.
 - A component that ships several base versions declares them in `<component>/variants.json` rather than duplicating the directory; keep the `Dockerfile`'s `ARG` default equal to `default` there, so a plain `docker build` reproduces the `latest` image.
 - Preserve non-root execution, health checks, signal handling, and writable-directory ownership in runtime images.
 - Do not commit credentials, private keys, certificates, generated ACME state, or registry tokens.
@@ -39,6 +40,12 @@ jq empty <component>/variants.json
 
 # Build each variant of a multi-version component.
 docker build --build-arg NODE_VERSION=24 -t local/node-runtime:node24 ./node-runtime
+
+# Build for the non-native architecture when changing what an image installs or
+# downloads. Local cross-builds go through emulation, so expect them to be slow;
+# CI itself uses native runners per architecture.
+docker buildx build --platform linux/arm64 -t local/<component>:arm64 ./<component>
+docker buildx build --platform linux/amd64 -t local/<component>:amd64 ./<component>
 
 # Exercise release-tag discovery when release automation changes.
 ./.github/scripts/validate-releases.sh
