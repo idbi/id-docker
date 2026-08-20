@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/idbi/id-docker/compare/node-runtime@v2.0.0...node-runtime@v2.1.0) (2026-08-20)
+
+
+### Features
+
+* add multi-architecture builds and manifests for Docker images ([0af2021](https://github.com/idbi/id-docker/commit/0af202107e03da3b3c91717b1692d1aa75289ae6))
+
 ## [2.0.0](https://github.com/idbi/id-docker/compare/node-runtime@v1.0.0...node-runtime@v2.0.0) (2026-08-19)
 
 
