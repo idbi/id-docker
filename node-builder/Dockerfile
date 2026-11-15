@@ -63,4 +63,7 @@ WORKDIR /app
 # RUN npm install
 
 # Default command is a bash shell for development or further commands
+# Build/CI image: runs as root on purpose so mounted workspaces and CI caches stay
+# writable. Runtime images drop privileges.
+# nosemgrep: dockerfile.security.missing-user.missing-user
 CMD ["bash"]
