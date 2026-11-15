@@ -14,11 +14,11 @@ concurrency:
 permissions:
   contents: read
 
-# Every job runs on a fresh, single-use runner: GitHub-hosted VMs are discarded
-# after each job. To use your own ephemeral runners (for example just-in-time or
-# `--ephemeral` self-hosted ones), set the CI_RUNS_ON variable to a JSON array
-# of labels, such as '["self-hosted", "linux", "x64"]'. The build matrix keeps its
-# per-architecture hosted runners, because it needs one runner of each CPU type.
+# Every job runs on a GitHub-hosted runner, which is a fresh VM discarded after the
+# job. The organization's CI_RUNS_ON variable (the `ephemeral` self-hosted pool) is
+# deliberately not used: this repository is public, and the pool's runner group does
+# not accept public repositories. Running pull request code from a public repository
+# on the organization's own runners would also expose that infrastructure to forks.
 jobs:
   # The lint and scan steps mirror the idbi/.github modules (actionlint.yml,
   # sast-semgrep.yml, sca-osv.yml) with the same tools, versions and rulesets.
@@ -27,7 +27,7 @@ jobs:
   # workflows that live in a private one. Bump the versions with the org modules.
   actionlint:
     name: actionlint
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout code
@@ -50,7 +50,7 @@ jobs:
 
   semgrep:
     name: semgrep
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout code
@@ -69,7 +69,7 @@ jobs:
 
   osv:
     name: osv
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout code
@@ -94,7 +94,7 @@ jobs:
 
   validate:
     name: validate
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout code
@@ -120,7 +120,7 @@ jobs:
 
   plan:
     name: plan
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       builds: ${{ steps.plan.outputs.builds }}
@@ -203,7 +203,7 @@ jobs:
     name: ci
     if: ${{ always() }}
     needs: [actionlint, semgrep, osv, validate, build]
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check results
