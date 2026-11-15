@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/idbi/id-docker/compare/node-builder@v1.0.0...node-builder@v1.1.0) (2026-11-15)
+
+
+### Features
+
+* add multi-architecture builds and manifests for Docker images ([0af2021](https://github.com/idbi/id-docker/commit/0af202107e03da3b3c91717b1692d1aa75289ae6))
+* **node-builder:** mark intentional root user for static analysis ([53e4619](https://github.com/idbi/id-docker/commit/53e4619ae8e246e02f9c45ff8b87eb0834631ea4))
+
 ## [1.0.0](https://github.com/idbi/id-docker/compare/node-builder@v0.4.0...node-builder@v1.0.0) (2026-08-19)
 
 
