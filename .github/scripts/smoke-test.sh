@@ -26,7 +26,7 @@ wait_healthy() {
 
 case "$component" in
   certbot-renewal)
-    run python -c 'import certbot, certbot_dns_route53, boto3'
+    run python -c 'import certbot, certbot_dns_route53, certbot_dns_cloudflare, boto3'
     ;;
   php-builder)
     run php -v

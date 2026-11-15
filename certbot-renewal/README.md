@@ -1,8 +1,8 @@
 # Certbot Renewal Automation
 
 This image checks a certificate stored in HashiCorp Vault, obtains an apex and
-wildcard certificate through Certbot's Route53 DNS-01 plugin when renewal is
-needed, and writes the result to Vault KV v2. The renewal application was
+wildcard certificate through Certbot's Route53 or Cloudflare DNS-01 plugin when
+renewal is needed, and writes the result to Vault KV v2. The renewal application was
 migrated from Bash and the Vault CLI to typed Python code using `hvac`.
 
 ## Authentication precedence
@@ -55,6 +55,17 @@ Renewal variables:
 - `DAYS_THRESHOLD`: renew when the stored certificate expires within this many
   days; defaults to `30`.
 
+DNS provider variables:
+
+- `DNS_PROVIDER`: `route53` (the default) or `cloudflare`.
+- `CLOUDFLARE_API_TOKEN`: required when `DNS_PROVIDER=cloudflare`. Use a scoped
+  API token with `Zone:DNS:Edit` (and `Zone:Zone:Read`) for the zone. The
+  application writes it to a `0600` credentials file in a temporary directory
+  that is deleted after Certbot exits, and removes it from the Certbot child
+  environment.
+- `CLOUDFLARE_PROPAGATION_SECONDS`: seconds to wait for the TXT record to
+  propagate; defaults to `10`.
+
 Logging variables:
 
 - `LOG_LEVEL`: `INFO` (the default), `DEBUG`, `TRACE`, `WARNING`, `ERROR`, or
@@ -76,7 +87,7 @@ character; values of two or fewer characters remain fully masked. The marker
 also contains the credential length and the first 12 hexadecimal characters of
 its SHA-256 digest. Request and response bodies are never logged.
 
-Route53 authentication continues to use the standard AWS credential chain.
+With `DNS_PROVIDER=route53`, authentication uses the standard AWS credential chain.
 Common variables include `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
 `AWS_SESSION_TOKEN`, and `AWS_DEFAULT_REGION`. The Vault token is removed from
 the Certbot child environment; AWS variables are preserved.
@@ -108,7 +119,8 @@ path "auth/token/lookup-self" {
 
 ## Certbot behavior
 
-Certbot requests both `DOMAIN` and `*.DOMAIN` with `--dns-route53`, uses
+Certbot requests both `DOMAIN` and `*.DOMAIN` with `--dns-route53` or
+`--dns-cloudflare` (per `DNS_PROVIDER`), uses
 `DOMAIN` as `--cert-name`, and keeps the existing non-interactive, terms,
 email, config, work, and ephemeral log options. Files are read from:
 
@@ -145,5 +157,20 @@ docker run --rm \
   -e EMAIL="admin@example.com" \
   -e AWS_ACCESS_KEY_ID="..." \
   -e AWS_SECRET_ACCESS_KEY="..." \
+  local/certbot-renewal:test
+```
+
+For Cloudflare DNS validation:
+
+```sh
+docker run --rm \
+  -e VAULT_ADDR="https://vault.example.com" \
+  -e VAULT_MOUNT_POINT="idbi" \
+  -e VAULT_KEY="certificates/nginx" \
+  -e VAULT_TOKEN="..." \
+  -e DOMAIN="example.com" \
+  -e EMAIL="admin@example.com" \
+  -e DNS_PROVIDER="cloudflare" \
+  -e CLOUDFLARE_API_TOKEN="..." \
   local/certbot-renewal:test
 ```

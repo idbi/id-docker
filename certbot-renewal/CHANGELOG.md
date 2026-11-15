@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v2.0.0...certbot-renewal@v2.1.0) (2026-11-15)
+
+
+### Features
+
+* **certbot-renewal:** add Cloudflare DNS provider ([1310327](https://github.com/idbi/id-docker/commit/1310327d198fa302d057104ed0ed8554cd6478d8))
+* **certbot-renewal:** update to Python 3.12.16 and patch dependencies ([726497a](https://github.com/idbi/id-docker/commit/726497a2f0804295dba42d3e1be0cceca0b2a8a3))
+
 ## [2.0.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v1.1.0...certbot-renewal@v2.0.0) (2026-08-12)
 
 
