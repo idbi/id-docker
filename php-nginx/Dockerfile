@@ -8,7 +8,7 @@
 # Runs fully non-root (the `nginx` user) on port 8080, so it works under
 # restricted Kubernetes Pod Security policies without extra privileges.
 
-FROM nginx:alpine
+FROM nginx:1.31.8-alpine3.24
 
 # Main tuning config + the Laravel server block template. The template is
 # rendered to /etc/nginx/conf.d/default.conf at container start by the base
