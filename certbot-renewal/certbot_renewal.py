@@ -48,6 +48,9 @@ class CertificateFileError(RuntimeError):
     """Raised when Certbot output files cannot be safely loaded."""
 
 
+DNS_PROVIDERS = ("route53", "cloudflare")
+
+
 class AuthenticationSource(Enum):
     KUBERNETES = "kubernetes"
     STATIC_TOKEN = "static-token"
@@ -75,6 +78,9 @@ class Config:
     vault_token: str | None = field(default=None, repr=False)
     vault_cacert: Path | None = None
     days_threshold: int = 30
+    dns_provider: str = "route53"
+    cloudflare_api_token: str | None = field(default=None, repr=False)
+    cloudflare_propagation_seconds: int = 10
 
     @classmethod
     def from_env(cls, environment: Mapping[str, str] | None = None) -> Config:
@@ -106,6 +112,28 @@ class Config:
         if not jwt_path:
             raise ConfigurationError("VAULT_JWT_PATH must not be empty")
 
+        dns_provider = env.get("DNS_PROVIDER", "route53").strip().lower()
+        if dns_provider not in DNS_PROVIDERS:
+            raise ConfigurationError(
+                "DNS_PROVIDER must be one of: " + ", ".join(DNS_PROVIDERS)
+            )
+        cloudflare_token = env.get("CLOUDFLARE_API_TOKEN", "").strip() or None
+        if dns_provider == "cloudflare" and cloudflare_token is None:
+            raise ConfigurationError(
+                "CLOUDFLARE_API_TOKEN is required when DNS_PROVIDER=cloudflare"
+            )
+        raw_propagation = env.get("CLOUDFLARE_PROPAGATION_SECONDS", "10").strip()
+        try:
+            propagation = int(raw_propagation)
+        except ValueError as exc:
+            raise ConfigurationError(
+                "CLOUDFLARE_PROPAGATION_SECONDS must be a non-negative integer"
+            ) from exc
+        if propagation < 0:
+            raise ConfigurationError(
+                "CLOUDFLARE_PROPAGATION_SECONDS must be a non-negative integer"
+            )
+
         token = env.get("VAULT_TOKEN", "").strip() or None
         cacert = env.get("VAULT_CACERT", "").strip()
         return cls(
@@ -120,6 +148,9 @@ class Config:
             vault_token=token,
             vault_cacert=Path(cacert) if cacert else None,
             days_threshold=days_threshold,
+            dns_provider=dns_provider,
+            cloudflare_api_token=cloudflare_token,
+            cloudflare_propagation_seconds=propagation,
         )
 
 
@@ -417,9 +448,28 @@ def certificate_needs_renewal(certificate: str | None, days_threshold: int) -> b
     return True
 
 
+def _dns_plugin_args(config: Config, directory: Path) -> list[str]:
+    if config.dns_provider == "route53":
+        return ["--dns-route53"]
+
+    assert config.cloudflare_api_token is not None
+    credentials = directory / "cloudflare.ini"
+    descriptor = os.open(credentials, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(f"dns_cloudflare_api_token = {config.cloudflare_api_token}\n")
+    return [
+        "--dns-cloudflare",
+        "--dns-cloudflare-credentials",
+        str(credentials),
+        "--dns-cloudflare-propagation-seconds",
+        str(config.cloudflare_propagation_seconds),
+    ]
+
+
 def run_certbot(config: Config) -> None:
     child_env = os.environ.copy()
     child_env.pop("VAULT_TOKEN", None)
+    child_env.pop("CLOUDFLARE_API_TOKEN", None)
 
     with tempfile.TemporaryDirectory(prefix="certbot-logs.") as directory:
         logs_dir = Path(directory)
@@ -427,7 +477,7 @@ def run_certbot(config: Config) -> None:
         command = [
             "certbot",
             "certonly",
-            "--dns-route53",
+            *_dns_plugin_args(config, logs_dir),
             "--domains",
             config.domain,
             "--domains",
@@ -501,7 +551,8 @@ def renew_and_store(client: hvac.Client, config: Config) -> None:
         return
 
     logger.info(
-        "Requesting an apex and wildcard certificate with Route53 DNS validation"
+        "Requesting an apex and wildcard certificate with %s DNS validation",
+        config.dns_provider,
     )
     run_certbot(config)
     fullchain, privkey = read_certificate_files(config)

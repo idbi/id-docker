@@ -24,7 +24,7 @@ A production-ready Node.js runtime image (Alpine) tuned for Next.js apps built w
 > Node 18 and 20 are past upstream end-of-life and get no further security patches; they are published for migration only. Start new services on `:node24`.
 
 ### **certbot-renewal**
-An automated TLS/SSL certificate renewal solution using Certbot with DNS-01 validation (AWS Route53) and secure upload to HashiCorp Vault. Designed for Kubernetes CronJobs and standalone automation.
+An automated TLS/SSL certificate renewal solution using Certbot with DNS-01 validation (AWS Route53 or Cloudflare) and secure upload to HashiCorp Vault. Designed for Kubernetes CronJobs and standalone automation.
 
 ---
 
