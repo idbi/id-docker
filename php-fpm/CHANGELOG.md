@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/idbi/id-docker/compare/php-fpm@v1.0.3...php-fpm@v1.1.0) (2026-11-15)
+
+
+### Features
+
+* add multi-architecture builds and manifests for Docker images ([0af2021](https://github.com/idbi/id-docker/commit/0af202107e03da3b3c91717b1692d1aa75289ae6))
+* **php-fpm:** pin PHP 8.3.36 on Alpine 3.24 and extension installer 2.13.2 ([34d9703](https://github.com/idbi/id-docker/commit/34d970323ea48b97ae7b68385256a3e655a63c1b))
+
 ## [1.0.3](https://github.com/idbi/id-docker/compare/php-fpm@v1.0.2...php-fpm@v1.0.3) (2026-07-10)
 
 
