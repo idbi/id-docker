@@ -12,10 +12,25 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-24.04
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
     steps:
+      # Uses the workflow's own GITHUB_TOKEN, not a personal access token.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
-          token: ${{ secrets.SECRET_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # Release tags created with GITHUB_TOKEN do not start other workflows, so the
+  # publish workflow is called directly instead of waiting for the tag push.
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
+    uses: ./.github/workflows/docker-publish.yml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
