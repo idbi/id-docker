@@ -1,5 +1,5 @@
-# Start from latest PHP 8.3
-FROM php:8.3-cli
+# Pinned PHP 8.3 patch release
+FROM php:8.3.36-cli
 
 # Install system dependencies
 RUN apt-get update && \
@@ -27,12 +27,15 @@ RUN apt-get update && \
 # Install basic PHP extensions
 RUN docker-php-ext-install pdo_mysql curl gd mbstring bcmath intl zip soap pcntl sockets exif sodium
 
-# Install Composer (latest version from official image)
-COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
+# Install Composer (pinned version from the official image)
+COPY --from=composer:2.11.2 /usr/bin/composer /usr/local/bin/composer
 RUN composer --version
 
 # Set the working directory
 WORKDIR /app
 
 # Start with bash shell on container run
+# Build/CI image: runs as root on purpose so mounted workspaces and CI caches stay
+# writable. Runtime images drop privileges.
+# nosemgrep: dockerfile.security.missing-user.missing-user
 CMD ["bash"]
