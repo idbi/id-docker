@@ -1,0 +1,214 @@
+name: CI
+
+# Pull request checks. Images built here are ephemeral: they are loaded into the
+# runner's local Docker daemon, smoke-tested and discarded with the runner. Nothing
+# is pushed to a registry; publishing stays in docker-publish.yml on release tags.
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Every job runs on a fresh, single-use runner: GitHub-hosted VMs are discarded
+# after each job. To use your own ephemeral runners (for example just-in-time or
+# `--ephemeral` self-hosted ones), set the CI_RUNS_ON variable to a JSON array
+# of labels, such as '["self-hosted", "linux", "x64"]'. The build matrix keeps its
+# per-architecture hosted runners, because it needs one runner of each CPU type.
+jobs:
+  # The lint and scan steps mirror the idbi/.github modules (actionlint.yml,
+  # sast-semgrep.yml, sca-osv.yml) with the same tools, versions and rulesets.
+  # They run inline instead of through `uses:` because this repository is public
+  # and idbi/.github is private: a public repository cannot call reusable
+  # workflows that live in a private one. Bump the versions with the org modules.
+  actionlint:
+    name: actionlint
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      # shellcheck is preinstalled on GitHub-hosted runners, so actionlint also
+      # checks every `run:` script.
+      - name: Lint workflows
+        env:
+          ACTIONLINT_VERSION: v1.7.12
+        run: go run "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}" -color
+
+  semgrep:
+    name: semgrep
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Semgrep
+        env:
+          SEMGREP_IMAGE: semgrep/semgrep:1.182.0
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/src" -w /src "$SEMGREP_IMAGE" \
+            semgrep scan --metrics=off --error \
+              --config p/security-audit --config p/secrets --config p/ci \
+              --config p/command-injection --config p/docker --config p/dockerfile
+
+  osv:
+    name: osv
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      # Scans certbot-renewal/requirements.txt against osv.dev. Any known
+      # vulnerability fails the job. Installed outside the scanned tree.
+      - name: Run osv-scanner
+        env:
+          OSV_SCANNER_VERSION: v2.7.0
+        run: |
+          GOBIN="${RUNNER_TEMP}/osv-bin" go install "github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION}"
+          "${RUNNER_TEMP}/osv-bin/osv-scanner" scan source --recursive .
+
+  validate:
+    name: validate
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate JSON
+        run: |
+          jq empty release-please-config.json .release-please-manifest.json
+          for f in */variants.json; do jq empty "$f"; done
+
+      - name: Check shell syntax
+        run: |
+          find . -type f \( -name '*.sh' -o -name 'php-fpm-healthcheck' \) -not -path './.git/*' -print0 \
+            | xargs -0 -n1 bash -n
+
+      - name: Validate Traefik Compose file
+        run: |
+          if [ -f traefik/docker-compose.yml ]; then
+            docker compose -f traefik/docker-compose.yml config --quiet
+          fi
+
+  plan:
+    name: plan
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    timeout-minutes: 5
+    outputs:
+      builds: ${{ steps.plan.outputs.builds }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # One entry per image: a component with variants.json expands to one entry
+      # per variant, every other component with a Dockerfile to a single entry.
+      - name: Plan builds
+        id: plan
+        run: |
+          builds='[]'
+          for dockerfile in */Dockerfile; do
+            comp="${dockerfile%/Dockerfile}"
+            if [ -f "${comp}/variants.json" ]; then
+              entries=$(jq -c --arg comp "$comp" '
+                .build_arg as $arg
+                | .variants
+                | map({component: $comp, label: "\($comp) \(.suffix)", tag: .suffix, build_args: "\($arg)=\(.value)"})
+              ' "${comp}/variants.json")
+            else
+              entries=$(jq -nc --arg comp "$comp" '[{component: $comp, label: $comp, tag: "test", build_args: ""}]')
+            fi
+            builds=$(jq -c --argjson entries "$entries" '. + $entries' <<< "$builds")
+          done
+          echo "builds=${builds}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.build.label }}, ${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
+    needs: plan
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJson(needs.plan.outputs.builds) }}
+        platform:
+          - arch: amd64
+            docker: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            docker: linux/arm64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE: local/${{ matrix.build.component }}:${{ matrix.build.tag }}-${{ github.run_id }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build ${{ matrix.build.label }} (${{ matrix.platform.arch }})
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./${{ matrix.build.component }}
+          platforms: ${{ matrix.platform.docker }}
+          build-args: ${{ matrix.build.build_args }}
+          # Ephemeral: loaded into this runner's daemon only, never pushed and never
+          # written to the shared layer cache.
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+
+      - name: Smoke test
+        env:
+          COMPONENT: ${{ matrix.build.component }}
+        run: ./.github/scripts/smoke-test.sh "$COMPONENT" "$IMAGE"
+
+      - name: Remove image
+        if: ${{ always() }}
+        run: docker image rm --force "$IMAGE" || true
+
+  # Single required check for branch protection.
+  ci-ok:
+    name: ci
+    if: ${{ always() }}
+    needs: [actionlint, semgrep, osv, validate, build]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON != '' && vars.CI_RUNS_ON || '["ubuntu-24.04"]') }}
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' >/dev/null

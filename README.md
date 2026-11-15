@@ -26,9 +26,6 @@ A production-ready Node.js runtime image (Alpine) tuned for Next.js apps built w
 ### **certbot-renewal**
 An automated TLS/SSL certificate renewal solution using Certbot with DNS-01 validation (AWS Route53) and secure upload to HashiCorp Vault. Designed for Kubernetes CronJobs and standalone automation.
 
-### **ssh-agent**
-A minimal Debian 12 slim image with `openssh-client`, `rsync`, `git`, and `curl`, running as an unprivileged `deploy` user. Used for key-based remote deployment and file-transfer steps in CI/CD pipelines.
-
 ---
 
 ## Repository Structure
@@ -60,10 +57,6 @@ docker/
 │   ├── CHANGELOG.md
 │   ├── variants.json             # builds one image per Node major
 │   └── docker/
-├── ssh-agent/
-│   ├── Dockerfile
-│   ├── README.md
-│   └── CHANGELOG.md
 ├── certbot-renewal/
 │   ├── Dockerfile
 │   ├── entrypoint.sh
@@ -74,8 +67,10 @@ docker/
 │   └── docker-compose.yml
 ├── .github/
 │   ├── scripts/
-│   │   └── validate-releases.sh  # derives the build matrix from released tags
+│   │   ├── validate-releases.sh  # derives the build matrix from released tags
+│   │   └── smoke-test.sh         # per-image smoke test used by CI
 │   └── workflows/
+│       ├── ci.yml                # PR lint, scan and ephemeral build + smoke test
 │       ├── docker-publish.yml
 │       └── release-please.yml
 ├── release-please-config.json    # component registry (see "Add a New Project")

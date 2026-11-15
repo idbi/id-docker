@@ -19,8 +19,8 @@ A production-ready Docker image based on **PHP 8.3 CLI** with a comprehensive se
 ## Features
 
 ### Core PHP Installation
-- **PHP 8.3 CLI**: The latest stable PHP 8.3 command-line interpreter
-- **Composer** (latest): Dependency manager for PHP projects
+- **PHP 8.3 CLI**: Pinned PHP 8.3 patch release (command-line interpreter)
+- **Composer** (pinned 2.x): Dependency manager for PHP projects
 - **Working directory**: `/app` - Pre-configured for your application code
 - **Shell**: Bash for container interaction and scripting
 

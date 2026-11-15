@@ -154,7 +154,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: nginx:alpine
+    image: nginx:1.31.8-alpine3.24
     depends_on: [app]
     ports:
       - "80:80"
@@ -303,7 +303,7 @@ volume, or a system temp dir other than `/tmp`.
 
 ## Image Information
 
-- **Base Image**: `php:8.3-fpm-alpine`
+- **Base Image**: `php:8.3.36-fpm-alpine3.24`
 - **Exposed Port**: `9000` (FastCGI)
 - **User**: `www-data` (non-root)
 - **Architectures**: `linux/amd64`, `linux/arm64` (multi-arch manifest)

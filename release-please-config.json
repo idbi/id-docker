@@ -27,10 +27,6 @@
     "certbot-renewal": {
       "component": "certbot-renewal",
       "release-type": "simple"
-    },
-    "ssh-agent": {
-      "component": "ssh-agent",
-      "release-type": "simple"
     }
   },
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"

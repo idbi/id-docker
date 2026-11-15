@@ -20,6 +20,18 @@ server {
     add_header X-XSS-Protection       "1; mode=block"                 always;
     add_header Referrer-Policy        "strict-origin-when-cross-origin" always;
 
+    # --- Readiness endpoint for the container HEALTHCHECK ---
+    # Answered by nginx directly (no php-fpm dependency), so it is a
+    # deterministic HTTP 200 that reflects nginx being up and serving, and works
+    # even before any application code is deployed. Exact-match location so it
+    # never falls through to the app. Point it at the app instead if you want the
+    # check to also exercise php-fpm.
+    location = /readyz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok";
+    }
+
     # --- Laravel front controller ---
     location / {
         try_files $uri $uri/ /index.php?$query_string;
