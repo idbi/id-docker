@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "*@v*.*.*"
+  # Called by release-please.yml right after it creates a release. Tags created
+  # with the default GITHUB_TOKEN do not trigger the `push` event above, but a
+  # called workflow always runs. Publishes the components whose latest release
+  # tag points at the checked-out commit.
+  workflow_call:
 permissions:
   contents: read
   packages: write
@@ -15,22 +20,8 @@ env:
   IMAGE_PREFIX: idbi/docker # owner/repo
 
 jobs:
-  release:
-    runs-on: ubuntu-24.04
-    outputs:
-      release_json: ${{ steps.release.outputs.releases_created }}
-    steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        id: release
-        with:
-          token: ${{ secrets.SECRET_TOKEN }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
   validate:
     runs-on: ubuntu-24.04
-    needs: release
-    if: needs.release.outputs.release_json == 'true' || needs.release.outputs.release_json == 'false'
     outputs:
       builds: ${{ steps.validate.outputs.builds }}
     steps:
@@ -90,7 +81,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.SECRET_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push ${{ matrix.build.label }} (${{ matrix.platform.arch }})
         id: build
@@ -159,7 +150,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.SECRET_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create multi-arch manifest for ${{ matrix.build.label }}
         id: manifest
