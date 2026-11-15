@@ -5,12 +5,12 @@
 # stage based on this image. Nginx is expected to run as a separate container
 # that talks to PHP-FPM over TCP port 9000.
 
-FROM php:8.3-fpm-alpine
+FROM php:8.3.36-fpm-alpine3.24
 
 # `install-php-extensions` resolves the Alpine/musl build + runtime deps for
 # each extension automatically, so we don't have to track apk-dev packages by
 # hand.
-COPY --from=ghcr.io/mlocati/php-extension-installer:latest /usr/bin/install-php-extensions /usr/local/bin/
+COPY --from=ghcr.io/mlocati/php-extension-installer:2.13.2 /usr/bin/install-php-extensions /usr/local/bin/
 
 # `fcgi` provides cgi-fcgi, used by the HEALTHCHECK to ping the FPM pool.
 RUN apk add --no-cache fcgi \
