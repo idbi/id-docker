@@ -4,6 +4,6 @@
   "php-builder": "0.5.0",
   "ssh-agent": "1.0.0",
   "php-fpm": "1.1.0",
-  "php-nginx": "1.0.2",
+  "php-nginx": "1.1.0",
   "node-runtime": "2.1.0"
 }
