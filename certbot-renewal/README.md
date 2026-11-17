@@ -58,6 +58,19 @@ Renewal variables:
 
 - `DAYS_THRESHOLD`: renew when the stored certificate expires within this many
   days; defaults to `30`.
+- `FORCE_RENEWAL`: `true` or `false` (the default). When `true`, a new
+  certificate is requested even if the stored one is valid and covers every name.
+  Let's Encrypt rate limits still apply.
+- `REVOKE_PREVIOUS`: `true` or `false` (the default). Implies `FORCE_RENEWAL`.
+  The previous certificate in Vault is read first, a replacement is issued and
+  stored, and only then is the previous one revoked with its own private key (no
+  ACME account is needed). If issuance fails, nothing is revoked. If the
+  replacement is stored but the revoke fails, the job exits with an error and the
+  new certificate stays in Vault. Remove the variable after use, or every run
+  will revoke and reissue.
+- `REVOKE_REASON`: RFC 5280 reason for the revocation: `unspecified` (the
+  default), `keycompromise`, `affiliationchanged`, `superseded`, or
+  `cessationofoperation`.
 
 DNS provider variables:
 
