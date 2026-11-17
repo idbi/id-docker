@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v3.0.0...certbot-renewal@v3.1.0) (2026-11-17)
+
+
+### Features
+
+* **certbot-renewal:** add forced renewal and revocation of the previous certificate ([942c251](https://github.com/idbi/id-docker/commit/942c2514fd6dc9bc9099fc5ad028c8b690a48aa2))
+* **certbot-renewal:** agregar renovación forzada y revocación del certificado anterior ([1cf8f76](https://github.com/idbi/id-docker/commit/1cf8f76721ebe37c10a62c9b4c14379089661023))
+
 ## [3.0.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v2.1.0...certbot-renewal@v3.0.0) (2026-11-17)
 
 
