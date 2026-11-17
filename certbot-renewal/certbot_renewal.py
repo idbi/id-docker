@@ -70,7 +70,7 @@ class Config:
     vault_addr: str
     vault_mount_point: str
     vault_key: str
-    domain: str
+    domains: tuple[str, ...]
     email: str
     vault_role: str = "certbot-renewal"
     vault_auth_path: str = "kubernetes"
@@ -81,6 +81,16 @@ class Config:
     dns_provider: str = "route53"
     cloudflare_api_token: str | None = field(default=None, repr=False)
     cloudflare_propagation_seconds: int = 10
+
+    @property
+    def cert_name(self) -> str:
+        """Certbot lineage name: the first domain without any wildcard prefix."""
+        return self.domains[0].removeprefix("*.")
+
+    @property
+    def certificate_names(self) -> tuple[str, ...]:
+        """Every name requested from Certbot, in order and without duplicates."""
+        return self.domains
 
     @classmethod
     def from_env(cls, environment: Mapping[str, str] | None = None) -> Config:
@@ -134,13 +144,15 @@ class Config:
                 "CLOUDFLARE_PROPAGATION_SECONDS must be a non-negative integer"
             )
 
+        domains = _parse_domains(_required(env, "DOMAIN"))
+
         token = env.get("VAULT_TOKEN", "").strip() or None
         cacert = env.get("VAULT_CACERT", "").strip()
         return cls(
             vault_addr=_required(env, "VAULT_ADDR"),
             vault_mount_point=vault_mount_point,
             vault_key=vault_key,
-            domain=_required(env, "DOMAIN"),
+            domains=domains,
             email=_required(env, "EMAIL"),
             vault_role=vault_role,
             vault_auth_path=vault_auth_path,
@@ -159,6 +171,21 @@ def _required(environment: Mapping[str, str], name: str) -> str:
     if not value:
         raise ConfigurationError(f"Required environment variable {name} is not set")
     return value
+
+
+def _parse_domains(raw: str) -> tuple[str, ...]:
+    domains = tuple(
+        dict.fromkeys(
+            item.strip().lower() for item in raw.replace(",", " ").split() if item
+        )
+    )
+    if not domains:
+        raise ConfigurationError("DOMAIN must contain at least one domain")
+    for domain in domains:
+        name = domain.removeprefix("*.")
+        if not name or "*" in name or "/" in name or ":" in name:
+            raise ConfigurationError(f"DOMAIN contains an invalid domain: {domain}")
+    return domains
 
 
 def _configure_logging(environment: Mapping[str, str]) -> None:
@@ -423,7 +450,11 @@ def read_stored_certificate(client: hvac.Client, config: Config) -> str | None:
     return certificate if isinstance(certificate, str) and certificate else None
 
 
-def certificate_needs_renewal(certificate: str | None, days_threshold: int) -> bool:
+def certificate_needs_renewal(
+    certificate: str | None,
+    days_threshold: int,
+    required_names: tuple[str, ...] = (),
+) -> bool:
     if certificate is None:
         logger.warning("No certificate is stored in Vault; renewal is required")
         return True
@@ -434,6 +465,22 @@ def certificate_needs_renewal(certificate: str | None, days_threshold: int) -> b
             "The certificate stored in Vault is invalid; renewal is required"
         )
         return True
+
+    if required_names:
+        try:
+            san = parsed.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            )
+            present = {n.lower() for n in san.value.get_values_for_type(x509.DNSName)}
+        except x509.ExtensionNotFound:
+            present = set()
+        missing = [n for n in required_names if n.lower() not in present]
+        if missing:
+            logger.info(
+                "Stored certificate does not cover %s; renewal is required",
+                ", ".join(missing),
+            )
+            return True
 
     renewal_at = datetime.now(UTC) + timedelta(days=days_threshold)
     if parsed.not_valid_after_utc > renewal_at:
@@ -479,11 +526,9 @@ def run_certbot(config: Config) -> None:
             "certonly",
             *_dns_plugin_args(config, logs_dir),
             "--domains",
-            config.domain,
-            "--domains",
-            f"*.{config.domain}",
+            ",".join(config.certificate_names),
             "--cert-name",
-            config.domain,
+            config.cert_name,
             "--non-interactive",
             "--agree-tos",
             "--email",
@@ -519,7 +564,7 @@ def _read_nonempty(path: Path, description: str) -> str:
 
 
 def read_certificate_files(config: Config) -> tuple[str, str]:
-    certificate_dir = LETSENCRYPT_CONFIG_DIR / "live" / config.domain
+    certificate_dir = LETSENCRYPT_CONFIG_DIR / "live" / config.cert_name
     return (
         _read_nonempty(certificate_dir / "fullchain.pem", "certificate"),
         _read_nonempty(certificate_dir / "privkey.pem", "private key"),
@@ -547,11 +592,14 @@ def store_certificate(
 
 def renew_and_store(client: hvac.Client, config: Config) -> None:
     certificate = read_stored_certificate(client, config)
-    if not certificate_needs_renewal(certificate, config.days_threshold):
+    if not certificate_needs_renewal(
+        certificate, config.days_threshold, config.certificate_names
+    ):
         return
 
     logger.info(
-        "Requesting an apex and wildcard certificate with %s DNS validation",
+        "Requesting a certificate for %s with %s DNS validation",
+        ", ".join(config.certificate_names),
         config.dns_provider,
     )
     run_certbot(config)

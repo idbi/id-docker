@@ -1,7 +1,7 @@
 # Certbot Renewal Automation
 
-This image checks a certificate stored in HashiCorp Vault, obtains an apex and
-wildcard certificate through Certbot's Route53 or Cloudflare DNS-01 plugin when
+This image checks a certificate stored in HashiCorp Vault, obtains a certificate for one or
+more domains (wildcards only when listed) through Certbot's Route53 or Cloudflare DNS-01 plugin when
 renewal is needed, and writes the result to Vault KV v2. The renewal application was
 migrated from Bash and the Vault CLI to typed Python code using `hvac`.
 
@@ -37,7 +37,11 @@ Required variables:
 - `VAULT_MOUNT_POINT`: KV v2 mount point, for example `idbi`.
 - `VAULT_KEY`: key within the KV v2 mount, for example
   `certificates/nginx`.
-- `DOMAIN`: certificate name and apex DNS name.
+- `DOMAIN`: one or more domains or subdomains, separated by commas or spaces,
+  for example `example.com,app.example.org`. The first entry (without any `*.`)
+  is the Certbot certificate name and the `/etc/letsencrypt/live/` directory.
+  Only the names you list are requested; no wildcard is added automatically.
+  Write `*.example.com` explicitly to get a wildcard.
 - `EMAIL`: Let's Encrypt account email.
 
 Vault authentication variables:
@@ -119,16 +123,17 @@ path "auth/token/lookup-self" {
 
 ## Certbot behavior
 
-Certbot requests both `DOMAIN` and `*.DOMAIN` with `--dns-route53` or
+Certbot requests exactly the `DOMAIN` entries in a single certificate with `--dns-route53` or
 `--dns-cloudflare` (per `DNS_PROVIDER`), uses
-`DOMAIN` as `--cert-name`, and keeps the existing non-interactive, terms,
+the first domain as `--cert-name`, and keeps the existing non-interactive, terms,
 email, config, work, and ephemeral log options. Files are read from:
 
 ```text
-/etc/letsencrypt/live/<DOMAIN>/fullchain.pem
-/etc/letsencrypt/live/<DOMAIN>/privkey.pem
+/etc/letsencrypt/live/<first domain>/fullchain.pem
+/etc/letsencrypt/live/<first domain>/privkey.pem
 ```
 
+Renewal also happens when the stored certificate lacks any requested name.
 Both files must exist and be non-empty before the Vault write occurs. The
 application never logs raw JWTs, raw Vault tokens, AWS credentials, certificate
 values, private keys, complete subprocess environments, request bodies, or raw
