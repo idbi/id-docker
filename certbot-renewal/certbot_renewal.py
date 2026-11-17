@@ -49,6 +49,13 @@ class CertificateFileError(RuntimeError):
 
 
 DNS_PROVIDERS = ("route53", "cloudflare")
+REVOKE_REASONS = (
+    "unspecified",
+    "keycompromise",
+    "affiliationchanged",
+    "superseded",
+    "cessationofoperation",
+)
 
 
 class AuthenticationSource(Enum):
@@ -81,6 +88,9 @@ class Config:
     dns_provider: str = "route53"
     cloudflare_api_token: str | None = field(default=None, repr=False)
     cloudflare_propagation_seconds: int = 10
+    force_renewal: bool = False
+    revoke_previous: bool = False
+    revoke_reason: str = "unspecified"
 
     @property
     def cert_name(self) -> str:
@@ -146,6 +156,14 @@ class Config:
 
         domains = _parse_domains(_required(env, "DOMAIN"))
 
+        force_renewal = _env_bool(env, "FORCE_RENEWAL")
+        revoke_previous = _env_bool(env, "REVOKE_PREVIOUS")
+        revoke_reason = env.get("REVOKE_REASON", "unspecified").strip().lower()
+        if revoke_reason not in REVOKE_REASONS:
+            raise ConfigurationError(
+                "REVOKE_REASON must be one of: " + ", ".join(REVOKE_REASONS)
+            )
+
         token = env.get("VAULT_TOKEN", "").strip() or None
         cacert = env.get("VAULT_CACERT", "").strip()
         return cls(
@@ -163,6 +181,9 @@ class Config:
             dns_provider=dns_provider,
             cloudflare_api_token=cloudflare_token,
             cloudflare_propagation_seconds=propagation,
+            force_renewal=force_renewal,
+            revoke_previous=revoke_previous,
+            revoke_reason=revoke_reason,
         )
 
 
@@ -171,6 +192,13 @@ def _required(environment: Mapping[str, str], name: str) -> str:
     if not value:
         raise ConfigurationError(f"Required environment variable {name} is not set")
     return value
+
+
+def _env_bool(environment: Mapping[str, str], name: str) -> bool:
+    value = environment.get(name, "false").strip().lower()
+    if value not in ("true", "false"):
+        raise ConfigurationError(f"{name} must be true or false")
+    return value == "true"
 
 
 def _parse_domains(raw: str) -> tuple[str, ...]:
@@ -423,7 +451,7 @@ def authenticate(config: Config) -> AuthenticatedVaultClient:
     )
 
 
-def read_stored_certificate(client: hvac.Client, config: Config) -> str | None:
+def read_stored_secret(client: hvac.Client, config: Config) -> Mapping[str, Any]:
     logger.debug(
         "Vault remote call: GET %s/v1/%s/data/%s",
         _safe_url(config.vault_addr).rstrip("/"),
@@ -436,18 +464,19 @@ def read_stored_certificate(client: hvac.Client, config: Config) -> str | None:
             path=config.vault_key,
         )
     except hvac.exceptions.InvalidPath:
-        return None
+        return {}
 
     if not isinstance(response, Mapping):
-        return None
+        return {}
     outer_data: Any = response.get("data")
     if not isinstance(outer_data, Mapping):
-        return None
+        return {}
     secret: Any = outer_data.get("data")
-    if not isinstance(secret, Mapping):
-        return None
-    certificate = secret.get("fullchain")
-    return certificate if isinstance(certificate, str) and certificate else None
+    return secret if isinstance(secret, Mapping) else {}
+
+
+def _nonempty_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def certificate_needs_renewal(
@@ -590,9 +619,59 @@ def store_certificate(
     )
 
 
+def revoke_certificate(config: Config, fullchain: str, privkey: str) -> None:
+    """Revoke a certificate using its own private key (no ACME account needed)."""
+    child_env = os.environ.copy()
+    child_env.pop("VAULT_TOKEN", None)
+    child_env.pop("CLOUDFLARE_API_TOKEN", None)
+
+    with tempfile.TemporaryDirectory(prefix="certbot-revoke.") as directory:
+        work = Path(directory)
+        (work / "letsencrypt.log").symlink_to("/dev/null")
+        paths = {"cert.pem": fullchain, "key.pem": privkey}
+        for name, content in paths.items():
+            descriptor = os.open(
+                work / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(content)
+        subprocess.run(
+            [
+                "certbot",
+                "revoke",
+                "--cert-path",
+                str(work / "cert.pem"),
+                "--key-path",
+                str(work / "key.pem"),
+                "--reason",
+                config.revoke_reason,
+                "--no-delete-after-revoke",
+                "--non-interactive",
+                "--config-dir",
+                str(LETSENCRYPT_CONFIG_DIR),
+                "--work-dir",
+                str(LETSENCRYPT_WORK_DIR),
+                "--logs-dir",
+                str(work),
+                "--max-log-backups",
+                "0",
+            ],
+            check=True,
+            text=True,
+            shell=False,
+            env=child_env,
+        )
+
+
 def renew_and_store(client: hvac.Client, config: Config) -> None:
-    certificate = read_stored_certificate(client, config)
-    if not certificate_needs_renewal(
+    secret = read_stored_secret(client, config)
+    certificate = _nonempty_str(secret.get("fullchain"))
+    previous_key = _nonempty_str(secret.get("privkey"))
+
+    force = config.force_renewal or config.revoke_previous
+    if force:
+        logger.info("Forced renewal requested; skipping the expiry check")
+    elif not certificate_needs_renewal(
         certificate, config.days_threshold, config.certificate_names
     ):
         return
@@ -606,6 +685,24 @@ def renew_and_store(client: hvac.Client, config: Config) -> None:
     fullchain, privkey = read_certificate_files(config)
     store_certificate(client, config, fullchain, privkey)
     logger.info("Certificate and private key stored in Vault successfully")
+
+    if config.revoke_previous:
+        # Revoke only after the replacement is safely stored, so a failed
+        # issuance never leaves Vault holding a revoked certificate.
+        if certificate is None or previous_key is None:
+            logger.warning(
+                "No previous certificate and key were stored in Vault; nothing "
+                "to revoke"
+            )
+        elif certificate == fullchain:
+            logger.warning("The previous certificate was reissued; skipping revoke")
+        else:
+            logger.info(
+                "Revoking the previous certificate (reason: %s)",
+                config.revoke_reason,
+            )
+            revoke_certificate(config, certificate, previous_key)
+            logger.info("Previous certificate revoked successfully")
 
 
 def run(config: Config) -> None:
