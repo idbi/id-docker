@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v2.1.0...certbot-renewal@v3.0.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **certbot-renewal:** DOMAIN=example.com no longer adds *.example.com automatically. Use DOMAIN="example.com,*.example.com" to keep it.
+
+### Features
+
+* **certbot-renewal:** support multiple domains and request only listed names ([e55a9c2](https://github.com/idbi/id-docker/commit/e55a9c2908e0504dfd0fe3a6191cb3fdc7a3328c))
+
 ## [2.1.0](https://github.com/idbi/id-docker/compare/certbot-renewal@v2.0.0...certbot-renewal@v2.1.0) (2026-11-15)
 
 
